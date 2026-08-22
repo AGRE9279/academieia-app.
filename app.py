@@ -58,7 +58,7 @@ def repondre_assistant_ia(question, profession, niveaux_debloques):
         f"(calculs de quantites, devis, etc.). Reponds en francais."
     )
     reponse = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": prompt_systeme},
             {"role": "user", "content": question},
