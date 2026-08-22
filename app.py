@@ -21,6 +21,52 @@ try:
 except ImportError:
     create_client = None
 
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
+# ----------------------------------------------------------------------
+# Connexion Groq (assistant IA)
+# ----------------------------------------------------------------------
+# Groq offre une API gratuite (avec quota) compatible avec des modeles Llama.
+# Cle a obtenir gratuitement sur https://console.groq.com/keys
+#
+# Secret attendu dans .streamlit/secrets.toml (ou secrets Streamlit Cloud) :
+#   GROQ_API_KEY = "gsk_..."
+#
+# Si absent, l'assistant reste en mode demo (message d'explication).
+GROQ_ACTIF = Groq is not None and "GROQ_API_KEY" in st.secrets
+
+
+@st.cache_resource
+def get_client_groq():
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+
+def repondre_assistant_ia(question, profession, niveaux_debloques):
+    """Interroge Groq (modele Llama gratuit) avec un contexte adapte au metier de l'utilisateur."""
+    client = get_client_groq()
+    contexte_metier = profession or "un metier technique"
+    contexte_niveaux = ", ".join(niveaux_debloques) if niveaux_debloques else "aucun niveau debloque"
+    prompt_systeme = (
+        f"Tu es l'assistant pedagogique d'AcademieIA, une plateforme de formation pour des "
+        f"professionnels ivoiriens du batiment (menuiserie aluminium, ebenisterie, et autres "
+        f"metiers techniques). L'utilisateur exerce le metier suivant : {contexte_metier}. "
+        f"Il a acces aux niveaux suivants : {contexte_niveaux}. Reponds de facon claire, concrete "
+        f"et pratique, adaptee a son metier. Utilise des exemples chiffres quand c'est pertinent "
+        f"(calculs de quantites, devis, etc.). Reponds en francais."
+    )
+    reponse = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": prompt_systeme},
+            {"role": "user", "content": question},
+        ],
+        max_tokens=800,
+    )
+    return reponse.choices[0].message.content
+
 # ----------------------------------------------------------------------
 # Connexion Supabase
 # ----------------------------------------------------------------------
@@ -767,7 +813,24 @@ def ecran_utilisateur():
         )
         st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment calculer la quantite de profiles alu pour une baie de 3m x 2m ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
-            st.info("L'integration avec l'assistant IA (Ollama) reste a brancher ici.")
+            question = st.session_state.get("question_assistant", "").strip()
+            if not question:
+                st.warning("Ecris ta question avant d'envoyer.")
+            elif not GROQ_ACTIF:
+                st.info("Assistant IA pas encore configure : ajoutez GROQ_API_KEY dans les secrets.")
+            else:
+                with st.spinner("L'assistant reflechit..."):
+                    try:
+                        reponse = repondre_assistant_ia(
+                            question, utilisateur.get("profession"), noms_debloques
+                        )
+                        st.markdown(
+                            f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                                        border-radius:8px;padding:14px 16px;margin-top:8px;'>{reponse}</div>""",
+                            unsafe_allow_html=True,
+                        )
+                    except Exception as erreur:
+                        st.error(f"L'assistant n'a pas pu repondre : {erreur}")
 
     else:
         with st.expander("Ressources gratuites : outils Google"):
