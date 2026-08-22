@@ -606,6 +606,11 @@ def afficher_demandes_paiement(utilisateurs):
 
     demandes = charger_demandes_paiement(statut="en_attente")
 
+    if not demandes.empty:
+        demandes = demandes.sort_values("created_at", ascending=False).drop_duplicates(
+            subset="user_id", keep="first"
+        )
+
     if "id" in utilisateurs.columns and not demandes.empty:
         demandes = demandes.merge(
             utilisateurs[["id", "nom", "email"]],
