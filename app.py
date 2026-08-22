@@ -591,7 +591,8 @@ def carte_metrique(titre, valeur, couleur=None):
 
 
 def afficher_demandes_paiement(utilisateurs):
-    """Affiche les demandes de paiement en attente avec boutons Approuver / Rejeter.
+    """Affiche les demandes de paiement en attente avec boutons Approuver / Rejeter,
+    et un historique separe des demandes deja traitees (approuvees/rejetees).
     Reutilisable dans le dashboard admin et super_admin."""
     if not SUPABASE_ACTIF:
         st.info("Mode demo : la gestion des demandes de paiement necessite Supabase configure.")
@@ -605,51 +606,85 @@ def afficher_demandes_paiement(utilisateurs):
 
     demandes = charger_demandes_paiement(statut="en_attente")
 
-    if demandes.empty:
-        st.caption("Aucune demande de paiement en attente.")
-        return
-
-    if "id" in utilisateurs.columns:
+    if "id" in utilisateurs.columns and not demandes.empty:
         demandes = demandes.merge(
             utilisateurs[["id", "nom", "email"]],
             left_on="user_id", right_on="id", how="left", suffixes=("", "_utilisateur"),
         )
 
-    for _, demande in demandes.iterrows():
-        nom_client = demande.get("nom") or demande.get("user_id")
-        email_client = demande.get("email") or "-"
-        st.markdown(
-            f"""<div style='background:var(--surface-2, #F7F7F5);border:0.5px solid var(--border, #E5E4E1);
-                        border-radius:8px;padding:10px 12px;margin-bottom:6px;'>
-                <p style='font-size:14px;font-weight:600;margin:0;'>{nom_client}</p>
-                <p style='font-size:12px;color:var(--text-secondary, #5f5e5a);margin:2px 0 0;'>{email_client}</p>
-                <p style='font-size:13px;margin:6px 0 0;'>Niveau demande : <strong>{demande.get("niveau")}</strong></p>
-                <p style='font-size:12px;color:var(--text-secondary, #5f5e5a);margin:2px 0 0;'>
-                    Reference : {demande.get("reference") or "-"} · {demande.get("created_at", "")[:16]}
-                </p>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-        col_approuver, col_rejeter = st.columns(2)
-        with col_approuver:
-            with st.container(key=f"bouton_jaune_approuver_{demande['id']}"):
-                if st.button("Approuver et generer un code", key=f"btn_approuver_{demande['id']}", use_container_width=True):
+    if demandes.empty:
+        st.caption("Aucune demande de paiement en attente.")
+    else:
+        for _, demande in demandes.iterrows():
+            nom_client = demande.get("nom") or demande.get("user_id")
+            email_client = demande.get("email") or "-"
+            st.markdown(
+                f"""<div style='background:var(--surface-2, #F7F7F5);border:0.5px solid var(--border, #E5E4E1);
+                            border-radius:8px;padding:10px 12px;margin-bottom:6px;'>
+                    <p style='font-size:14px;font-weight:600;margin:0;'>{nom_client}</p>
+                    <p style='font-size:12px;color:var(--text-secondary, #5f5e5a);margin:2px 0 0;'>{email_client}</p>
+                    <p style='font-size:13px;margin:6px 0 0;'>Niveau demande : <strong>{demande.get("niveau")}</strong></p>
+                    <p style='font-size:12px;color:var(--text-secondary, #5f5e5a);margin:2px 0 0;'>
+                        Reference : {demande.get("reference") or "-"} · {demande.get("created_at", "")[:16]}
+                    </p>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            col_approuver, col_rejeter = st.columns(2)
+            with col_approuver:
+                with st.container(key=f"bouton_jaune_approuver_{demande['id']}"):
+                    if st.button("Approuver et generer un code", key=f"btn_approuver_{demande['id']}", use_container_width=True):
+                        try:
+                            code = generer_code_acces()
+                            approuver_demande_paiement(demande["id"], demande["niveau"], code)
+                            st.session_state.dernier_code_genere = (
+                                f"Code genere pour {nom_client} : {code} — a transmettre par WhatsApp."
+                            )
+                            st.rerun()
+                        except Exception as erreur:
+                            st.error(f"Impossible d'approuver la demande : {erreur}")
+            with col_rejeter:
+                if st.button("Rejeter", key=f"btn_rejeter_{demande['id']}", use_container_width=True):
                     try:
-                        code = generer_code_acces()
-                        approuver_demande_paiement(demande["id"], demande["niveau"], code)
-                        st.session_state.dernier_code_genere = (
-                            f"Code genere pour {nom_client} : {code} — a transmettre par WhatsApp."
-                        )
+                        rejeter_demande_paiement(demande["id"])
                         st.rerun()
                     except Exception as erreur:
-                        st.error(f"Impossible d'approuver la demande : {erreur}")
-        with col_rejeter:
-            if st.button("Rejeter", key=f"btn_rejeter_{demande['id']}", use_container_width=True):
-                try:
-                    rejeter_demande_paiement(demande["id"])
-                    st.rerun()
-                except Exception as erreur:
-                    st.error(f"Impossible de rejeter la demande : {erreur}")
+                        st.error(f"Impossible de rejeter la demande : {erreur}")
+
+    with st.expander("Historique des demandes traitees"):
+        historique = charger_demandes_paiement()
+        if "id" in utilisateurs.columns and not historique.empty:
+            historique = historique.merge(
+                utilisateurs[["id", "nom", "email"]],
+                left_on="user_id", right_on="id", how="left", suffixes=("", "_utilisateur"),
+            )
+        historique = historique[historique["statut"] != "en_attente"] if not historique.empty else historique
+
+        if historique.empty:
+            st.caption("Aucune demande traitee pour le moment.")
+        else:
+            for _, demande in historique.sort_values("created_at", ascending=False).iterrows():
+                nom_client = demande.get("nom") or demande.get("user_id")
+                statut = demande.get("statut")
+                couleur_statut = PRIMARY_BLUE if statut == "approuvee" else "#B3261E"
+                libelle_statut = "Approuvee" if statut == "approuvee" else "Rejetee"
+                code_ligne = (
+                    f"<p style='font-size:12px;margin:4px 0 0;'>Code : <strong>{demande.get('code_genere')}</strong></p>"
+                    if statut == "approuvee" and demande.get("code_genere") else ""
+                )
+                st.markdown(
+                    f"""<div style='background:var(--surface-2, #F7F7F5);border:0.5px solid var(--border, #E5E4E1);
+                                border-radius:8px;padding:10px 12px;margin-bottom:6px;'>
+                        <div style='display:flex;justify-content:space-between;align-items:center;'>
+                            <p style='font-size:14px;font-weight:600;margin:0;'>{nom_client}</p>
+                            <span style='font-size:11px;background:{couleur_statut};color:white;padding:2px 8px;border-radius:8px;'>{libelle_statut}</span>
+                        </div>
+                        <p style='font-size:13px;margin:6px 0 0;'>Niveau : {demande.get("niveau")}</p>
+                        {code_ligne}
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
 
 
 # ----------------------------------------------------------------------
@@ -662,13 +697,7 @@ def ecran_admin():
     utilisateurs = st.session_state.utilisateurs
     seulement_utilisateurs = utilisateurs[utilisateurs["role"] == "utilisateur"]
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
-    with col2:
-        carte_metrique("Menuisiers alu", (seulement_utilisateurs["profession"] == "Menuisier aluminium").sum())
-    with col3:
-        carte_metrique("Ebenistes", (seulement_utilisateurs["profession"] == "Ebeniste").sum())
+    carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
 
     st.markdown("**Utilisateurs**")
     recherche = st.text_input("Rechercher un utilisateur", key="recherche_admin", label_visibility="collapsed", placeholder="Rechercher un utilisateur")
@@ -695,15 +724,11 @@ def ecran_super_admin():
     seulement_utilisateurs = utilisateurs[utilisateurs["role"] == "utilisateur"]
     seulement_admins = utilisateurs[utilisateurs["role"] == "admin"]
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
     with col1:
         carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
     with col2:
         carte_metrique("Admins", len(seulement_admins), PRIMARY_YELLOW)
-    with col3:
-        carte_metrique("Menuisiers alu", (seulement_utilisateurs["profession"] == "Menuisier aluminium").sum())
-    with col4:
-        carte_metrique("Ebenistes", (seulement_utilisateurs["profession"] == "Ebeniste").sum())
 
     st.markdown("**Comptes admin**")
     st.dataframe(seulement_admins[["nom", "email"]], use_container_width=True, hide_index=True)
