@@ -122,7 +122,8 @@ def approuver_demande_paiement(demande_id, niveau, code):
     client.table("codes_acces").insert({
         "code": code,
         "niveau": niveau,
-        "utilise": False,
+        "utilise": 0,
+        "cree_le": str(date.today()),
         "created_at": datetime.now().isoformat(),
     }, returning="minimal").execute()
     client.table("demandes_paiement").update({
