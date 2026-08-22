@@ -504,6 +504,11 @@ def afficher_suppression_compte(comptes, cle_widget):
     if not SUPABASE_ACTIF:
         st.info("Mode demo : la suppression de compte necessite Supabase configure.")
         return
+
+    if st.session_state.get(f"dernier_compte_supprime_{cle_widget}"):
+        st.success(st.session_state[f"dernier_compte_supprime_{cle_widget}"])
+        st.session_state[f"dernier_compte_supprime_{cle_widget}"] = None
+
     if comptes.empty or "id" not in comptes.columns:
         st.caption("Aucun compte disponible.")
         return
@@ -520,7 +525,7 @@ def afficher_suppression_compte(comptes, cle_widget):
     if st.button("Supprimer definitivement ce compte", key=f"btn_suppr_{cle_widget}", disabled=not confirmation):
         try:
             supprimer_compte(options[choix_libelle])
-            st.success(f"Compte {choix_libelle} supprime.")
+            st.session_state[f"dernier_compte_supprime_{cle_widget}"] = f"Compte {choix_libelle} supprime."
             st.rerun()
         except Exception as erreur:
             st.error(f"Impossible de supprimer ce compte : {erreur}")
@@ -545,6 +550,12 @@ def afficher_demandes_paiement(utilisateurs):
     if not SUPABASE_ACTIF:
         st.info("Mode demo : la gestion des demandes de paiement necessite Supabase configure.")
         return
+
+    if st.session_state.get("dernier_code_genere"):
+        st.success(st.session_state.dernier_code_genere)
+        if st.button("OK, j'ai note le code", key="btn_effacer_code_genere"):
+            st.session_state.dernier_code_genere = None
+            st.rerun()
 
     demandes = charger_demandes_paiement(statut="en_attente")
 
@@ -580,7 +591,9 @@ def afficher_demandes_paiement(utilisateurs):
                     try:
                         code = generer_code_acces()
                         approuver_demande_paiement(demande["id"], demande["niveau"], code)
-                        st.success(f"Code genere pour {nom_client} : **{code}** — a transmettre par WhatsApp.")
+                        st.session_state.dernier_code_genere = (
+                            f"Code genere pour {nom_client} : {code} — a transmettre par WhatsApp."
+                        )
                         st.rerun()
                     except Exception as erreur:
                         st.error(f"Impossible d'approuver la demande : {erreur}")
