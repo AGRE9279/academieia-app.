@@ -135,6 +135,14 @@ def rejeter_demande_paiement(demande_id):
     client = get_client()
     client.table("demandes_paiement").update({"statut": "rejetee"}).eq("id", demande_id).execute()
 
+
+def supprimer_compte(user_id):
+    """Supprime definitivement un compte (utilisateur ou admin) et ses donnees liees."""
+    client = get_client()
+    client.table("demandes_paiement").delete().eq("user_id", user_id).execute()
+    client.table("user_niveaux").delete().eq("user_id", user_id).execute()
+    client.table("users").delete().eq("id", user_id).execute()
+
 # ----------------------------------------------------------------------
 # Configuration generale
 # ----------------------------------------------------------------------
@@ -489,6 +497,34 @@ def ecran_authentification():
                         st.success("Compte cree. Vous pouvez vous connecter.")
 
 
+def afficher_suppression_compte(comptes, cle_widget):
+    """Selecteur + bouton de suppression definitive d'un compte, avec confirmation obligatoire.
+    'comptes' est un DataFrame avec au moins les colonnes id, nom, email."""
+    if not SUPABASE_ACTIF:
+        st.info("Mode demo : la suppression de compte necessite Supabase configure.")
+        return
+    if comptes.empty or "id" not in comptes.columns:
+        st.caption("Aucun compte disponible.")
+        return
+
+    options = {
+        f"{ligne.get('nom') or '-'} ({ligne.get('email') or '-'})": ligne["id"]
+        for _, ligne in comptes.iterrows()
+    }
+    choix_libelle = st.selectbox("Compte a supprimer", options.keys(), key=f"choix_suppr_{cle_widget}")
+    confirmation = st.checkbox(
+        "Je confirme vouloir supprimer definitivement ce compte (irreversible)",
+        key=f"confirm_suppr_{cle_widget}",
+    )
+    if st.button("Supprimer definitivement ce compte", key=f"btn_suppr_{cle_widget}", disabled=not confirmation):
+        try:
+            supprimer_compte(options[choix_libelle])
+            st.success(f"Compte {choix_libelle} supprime.")
+            st.rerun()
+        except Exception as erreur:
+            st.error(f"Impossible de supprimer ce compte : {erreur}")
+
+
 def carte_metrique(titre, valeur, couleur=None):
     """Carte de statistique stylee (remplace st.metric pour garder les couleurs de la marque)."""
     couleur = couleur or PRIMARY_BLUE
@@ -579,6 +615,9 @@ def ecran_admin():
     resultat = seulement_utilisateurs[seulement_utilisateurs["nom"].str.contains(recherche, case=False)] if recherche else seulement_utilisateurs
     st.dataframe(resultat[["nom", "profession", "inscrit_le"]], use_container_width=True, hide_index=True)
 
+    with st.expander("Supprimer un compte utilisateur"):
+        afficher_suppression_compte(seulement_utilisateurs, "admin_utilisateur")
+
     st.markdown("**Demandes de paiement en attente**")
     afficher_demandes_paiement(utilisateurs)
 
@@ -608,6 +647,10 @@ def ecran_super_admin():
 
     st.markdown("**Comptes admin**")
     st.dataframe(seulement_admins[["nom", "email"]], use_container_width=True, hide_index=True)
+
+    with st.expander("Supprimer un compte (utilisateur ou admin)"):
+        comptes_supprimables = pd.concat([seulement_utilisateurs, seulement_admins], ignore_index=True)
+        afficher_suppression_compte(comptes_supprimables, "super_admin_tous")
 
     st.markdown("**Demandes de paiement en attente**")
     afficher_demandes_paiement(utilisateurs)
