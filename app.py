@@ -193,6 +193,59 @@ def enregistrer_message_niveau1(user_id, nombre_actuel):
         pass
 
 
+# ------------------------------------------------------------------------
+# Quota quotidien de questions a l'assistant (selon le plus haut niveau
+# debloque). None = illimite.
+# ------------------------------------------------------------------------
+QUOTAS_PAR_NIVEAU = {0: 3, 1: 8, 2: 20, 3: 50, 4: None}
+
+
+def obtenir_quota_max(noms_debloques):
+    """Retourne le quota de questions/jour selon le plus haut niveau debloque
+    par l'utilisateur (0 = aucun niveau paye debloque). None = illimite."""
+    niveau_max = 0
+    for nom in noms_debloques or []:
+        for numero in range(1, 5):
+            if nom.startswith(f"Niveau {numero}"):
+                niveau_max = max(niveau_max, numero)
+    return QUOTAS_PAR_NIVEAU.get(niveau_max, 3)
+
+
+def charger_quota_utilisateur(user_id):
+    """Charge le compteur de questions du jour. Si la date enregistree n'est
+    pas celle d'aujourd'hui, le compteur est considere comme remis a zero."""
+    if not SUPABASE_ACTIF or not user_id:
+        return 0
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "quota_questions_jour, quota_date"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        if donnees.get("quota_date") == date.today().isoformat():
+            return donnees.get("quota_questions_jour") or 0
+        return 0
+    except Exception:
+        return 0
+
+
+def enregistrer_question_quota(user_id, questions_utilisees_aujourdhui):
+    """Incremente le compteur de questions du jour (remet a 1 si on a change
+    de jour depuis la derniere question)."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    nouveau_nombre = (questions_utilisees_aujourdhui or 0) + 1
+    try:
+        client = get_client()
+        client.table("users").update({
+            "quota_questions_jour": nouveau_nombre,
+            "quota_date": date.today().isoformat(),
+        }).eq("id", user_id).execute()
+    except Exception:
+        pass
+# ------------------------------------------------------------------------
+
+
 def charger_progression_niveau2(user_id):
     """Charge la progression du Niveau 2 : liste des prompts-modeles deja utilises
     (identifiants sous forme de texte separe par des virgules) et si le niveau est termine."""
@@ -1189,10 +1242,19 @@ def ecran_utilisateur():
     elif st.session_state.onglet_utilisateur_actif == "assistant":
         noms_debloques = [n["nom"] for n in niveaux if n["nom"] in niveaux_debloques]
         niveaux_texte = " + ".join(noms_debloques) if noms_debloques else "Aucun niveau debloque"
+
+        quota_max = obtenir_quota_max(noms_debloques)
+        questions_utilisees_aujourdhui = charger_quota_utilisateur(utilisateur.get("id"))
+        quota_texte = (
+            "Questions illimitees"
+            if quota_max is None
+            else f"{questions_utilisees_aujourdhui}/{quota_max} questions utilisees aujourd'hui"
+        )
         st.markdown(
             f"""<div style='background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;
                         font-size:12px;color:var(--text-secondary);'>
-                Niveau actif : <strong style='color:{PRIMARY_BLUE};'>{niveaux_texte}</strong>
+                Niveau actif : <strong style='color:{PRIMARY_BLUE};'>{niveaux_texte}</strong><br>
+                {quota_texte}
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1360,6 +1422,11 @@ def ecran_utilisateur():
                 st.warning("Ecris ta question avant d'envoyer.")
             elif not GROQ_ACTIF:
                 st.info("Assistant IA pas encore configure : ajoutez GROQ_API_KEY dans les secrets.")
+            elif quota_max is not None and questions_utilisees_aujourdhui >= quota_max:
+                st.error(
+                    f"🚫 Vous avez atteint votre quota de {quota_max} questions aujourd'hui. "
+                    f"Revenez demain, ou debloquez le niveau superieur pour continuer maintenant."
+                )
             else:
                 with st.spinner("L'assistant reflechit..."):
                     try:
@@ -1371,6 +1438,17 @@ def ecran_utilisateur():
                                         border-radius:8px;padding:14px 16px;margin-top:8px;'>{reponse}</div>""",
                             unsafe_allow_html=True,
                         )
+                        enregistrer_question_quota(utilisateur.get("id"), questions_utilisees_aujourdhui)
+                        if quota_max is not None and questions_utilisees_aujourdhui + 1 >= quota_max:
+                            st.warning(
+                                "⚠️ C'etait votre derniere question autorisee aujourd'hui. "
+                                "Debloquez le niveau superieur pour continuer sans limite."
+                            )
+                        elif quota_max is not None and questions_utilisees_aujourdhui + 2 >= quota_max:
+                            st.warning(
+                                "⚠️ Il vous reste 1 question aujourd'hui. Debloquez le niveau "
+                                "superieur pour continuer sans limite."
+                            )
                         if not progression_niveau1["niveau1_complete"]:
                             enregistrer_message_niveau1(
                                 utilisateur.get("id"),
