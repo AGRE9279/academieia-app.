@@ -26,6 +26,61 @@ try:
 except ImportError:
     Groq = None
 
+try:
+    from fpdf import FPDF
+except ImportError:
+    FPDF = None
+
+PDF_ACTIF = FPDF is not None
+
+
+def _texte_pdf_securise(texte):
+    """Le moteur PDF (police standard) ne gere que le latin-1 : on retire
+    proprement les caracteres non supportes (emojis, etc.) plutot que de planter."""
+    return (texte or "").encode("latin-1", errors="ignore").decode("latin-1")
+
+
+def generer_pdf_texte(titre, corps):
+    """Genere un PDF simple (titre + corps de texte) et retourne les octets."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=14)
+    pdf.multi_cell(0, 10, _texte_pdf_securise(titre))
+    pdf.ln(4)
+    pdf.set_font("Helvetica", size=11)
+    pdf.multi_cell(0, 7, _texte_pdf_securise(corps))
+    sortie = pdf.output(dest="S")
+    if isinstance(sortie, str):
+        sortie = sortie.encode("latin-1")
+    return bytes(sortie)
+
+
+def generer_pdf_certificat(nom_utilisateur, profession):
+    """Genere le certificat PDF de fin de parcours (Niveau 4 termine)."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=22)
+    pdf.ln(20)
+    pdf.multi_cell(0, 14, _texte_pdf_securise("Certificat de Maitrise AcademieIA"), align="C")
+    pdf.ln(10)
+    pdf.set_font("Helvetica", size=14)
+    pdf.multi_cell(
+        0, 10,
+        _texte_pdf_securise(
+            f"Ce certificat est decerne a\n\n{nom_utilisateur}\n\n"
+            f"pour avoir termine avec succes le parcours AcademieIA\n"
+            f"d'apprentissage de l'intelligence artificielle applique au metier de {profession}."
+        ),
+        align="C",
+    )
+    pdf.ln(14)
+    pdf.set_font("Helvetica", size=10)
+    pdf.multi_cell(0, 7, _texte_pdf_securise(f"Delivre le {date.today().strftime('%d/%m/%Y')}"), align="C")
+    sortie = pdf.output(dest="S")
+    if isinstance(sortie, str):
+        sortie = sortie.encode("latin-1")
+    return bytes(sortie)
+
 # ----------------------------------------------------------------------
 # Connexion Groq (assistant IA)
 # ----------------------------------------------------------------------
@@ -209,6 +264,45 @@ def enregistrer_message_niveau3(user_id, nombre_actuel):
         client.table("users").update({
             "messages_envoyes_niveau3": nouveau_nombre,
             "niveau3_complete": complete,
+        }).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+
+def charger_progression_niveau4(user_id):
+    """Charge la progression du Niveau 4 : cas d'usage avances deja essayes."""
+    if not SUPABASE_ACTIF or not user_id:
+        return {"prompts_utilises_niveau4": [], "niveau4_complete": False}
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "prompts_utilises_niveau4, niveau4_complete"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        texte = donnees.get("prompts_utilises_niveau4") or ""
+        utilises = [valeur for valeur in texte.split(",") if valeur]
+        return {
+            "prompts_utilises_niveau4": utilises,
+            "niveau4_complete": bool(donnees.get("niveau4_complete")),
+        }
+    except Exception:
+        return {"prompts_utilises_niveau4": [], "niveau4_complete": False}
+
+
+def enregistrer_prompt_niveau4(user_id, index_prompt, utilises_actuels):
+    """Ajoute un cas d'usage avance a la liste de ceux deja essayes. Termine a 3 essayes."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    index_str = str(index_prompt)
+    if index_str in utilises_actuels:
+        return
+    nouveaux = utilises_actuels + [index_str]
+    complete = len(set(nouveaux)) >= 3
+    try:
+        client = get_client()
+        client.table("users").update({
+            "prompts_utilises_niveau4": ",".join(nouveaux),
+            "niveau4_complete": complete,
         }).eq("id", user_id).execute()
     except Exception:
         pass
@@ -517,6 +611,9 @@ if "onglet_auth_par_defaut" not in st.session_state:
 
 if "niveau2_prompt_choisi" not in st.session_state:
     st.session_state.niveau2_prompt_choisi = None
+
+if "niveau4_prompt_choisi" not in st.session_state:
+    st.session_state.niveau4_prompt_choisi = None
 
 # ----------------------------------------------------------------------
 # Ecran : Accueil
@@ -1062,6 +1159,76 @@ def ecran_utilisateur():
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
         # ---------------------------------------------------------------------
 
+        # --- Niveau 4 : maitrise (payant, dernier niveau) -------------------
+        niveau4_debloque = any(nom.startswith("Niveau 4") for nom in noms_debloques)
+        niveau3_reellement_termine = not niveau3_debloque or progression_niveau3["niveau3_complete"]
+        progression_niveau4 = (
+            charger_progression_niveau4(utilisateur.get("id"))
+            if (
+                progression_niveau1["niveau1_complete"]
+                and niveau2_reellement_termine
+                and niveau3_reellement_termine
+                and niveau4_debloque
+            )
+            else {"prompts_utilises_niveau4": [], "niveau4_complete": False}
+        )
+
+        if (
+            progression_niveau1["niveau1_complete"]
+            and niveau2_reellement_termine
+            and niveau3_reellement_termine
+            and niveau4_debloque
+        ):
+            if progression_niveau4["niveau4_complete"]:
+                st.markdown(
+                    f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
+                                border-radius:8px;padding:14px 16px;margin-bottom:12px;'>
+                        <p style='font-size:15px;font-weight:600;margin:0;'>🏆 Maitrise AcademieIA</p>
+                        <p style='font-size:13px;margin:4px 0 0;color:var(--text-secondary);'>
+                            Vous avez termine tout le parcours ! Felicitations.
+                        </p>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                if PDF_ACTIF:
+                    st.download_button(
+                        "🏆 Telecharger mon certificat en PDF",
+                        data=generer_pdf_certificat(
+                            utilisateur.get("nom") or "Utilisateur",
+                            profession_utilisateur,
+                        ),
+                        file_name="certificat_academieia.pdf",
+                        mime="application/pdf",
+                        key="telecharger_certificat_niveau4",
+                        use_container_width=True,
+                    )
+                else:
+                    st.caption("Telechargement PDF indisponible : ajoutez 'fpdf2' a requirements.txt.")
+                st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+            else:
+                st.markdown("##### 🏆 Niveau 4 — Maitrise")
+                st.markdown(
+                    "Cas d'usage avances : combinez l'IA avec vos autres outils. "
+                    "Cliquez-en un pour le pre-remplir, modifiez-le si besoin, puis envoyez-le. "
+                    "*Essayez-en au moins 3 differents pour obtenir votre certificat.*"
+                )
+                prompts_avances_niveau4 = [
+                    f"Aide-moi a structurer un tableau Google Sheets pour suivre mon activite de {profession_utilisateur} (colonnes et formules utiles)",
+                    f"Redige-moi un modele de document Google Docs reutilisable chaque semaine dans mon metier de {profession_utilisateur}",
+                    f"Explique-moi comment automatiser une tache repetitive de mon metier de {profession_utilisateur} en combinant l'IA et un tableur",
+                    f"Aide-moi a preparer un message pour expliquer a un collegue {profession_utilisateur} comment utiliser l'IA au quotidien",
+                    f"Donne-moi 3 idees pour gagner encore plus de temps avec l'IA dans mon metier de {profession_utilisateur}",
+                ]
+                for index_avance, prompt_avance in enumerate(prompts_avances_niveau4):
+                    deja_utilise = str(index_avance) in progression_niveau4["prompts_utilises_niveau4"]
+                    libelle = f"✓ {prompt_avance}" if deja_utilise else prompt_avance
+                    if st.button(libelle, key=f"prompt_avance_niveau4_{index_avance}", use_container_width=True):
+                        st.session_state.question_assistant = prompt_avance
+                        st.session_state.niveau4_prompt_choisi = index_avance
+                st.caption(f"Cas essayes : {len(set(progression_niveau4['prompts_utilises_niveau4']))}/3")
+                st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+        # ---------------------------------------------------------------------
+
         st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
             question_a_envoyer = st.session_state.get("question_assistant", "").strip()
@@ -1121,6 +1288,34 @@ def ecran_utilisateur():
                                 st.success(
                                     "Vous etes autonome avec l'IA 🚀 Niveau 3 termine !"
                                 )
+                        elif st.session_state.get("niveau4_prompt_choisi") is not None:
+                            enregistrer_prompt_niveau4(
+                                utilisateur.get("id"),
+                                st.session_state.niveau4_prompt_choisi,
+                                progression_niveau4["prompts_utilises_niveau4"],
+                            )
+                            nouveau_total_niveau4 = len(set(
+                                progression_niveau4["prompts_utilises_niveau4"]
+                                + [str(st.session_state.niveau4_prompt_choisi)]
+                            ))
+                            st.session_state.niveau4_prompt_choisi = None
+                            if nouveau_total_niveau4 >= 3:
+                                st.success(
+                                    "Felicitations, vous avez termine tout le parcours AcademieIA 🏆 "
+                                    "Votre certificat est disponible ci-dessus, rechargez la page pour le voir."
+                                )
+
+                        if PDF_ACTIF:
+                            st.download_button(
+                                "📄 Telecharger cette reponse en PDF",
+                                data=generer_pdf_texte(
+                                    f"AcademieIA — Reponse de l'assistant ({profession_utilisateur})",
+                                    f"Question :\n{question_a_envoyer}\n\nReponse :\n{reponse}",
+                                ),
+                                file_name="reponse_academieia.pdf",
+                                mime="application/pdf",
+                                key="telecharger_pdf_reponse",
+                            )
                     except Exception as erreur:
                         st.error(f"L'assistant n'a pas pu repondre : {erreur}")
 
