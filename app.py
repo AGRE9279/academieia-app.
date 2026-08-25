@@ -138,6 +138,47 @@ def enregistrer_message_niveau1(user_id, nombre_actuel):
         pass
 
 
+def charger_progression_niveau2(user_id):
+    """Charge la progression du Niveau 2 : liste des prompts-modeles deja utilises
+    (identifiants sous forme de texte separe par des virgules) et si le niveau est termine."""
+    if not SUPABASE_ACTIF or not user_id:
+        return {"prompts_utilises_niveau2": [], "niveau2_complete": False}
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "prompts_utilises_niveau2, niveau2_complete"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        texte = donnees.get("prompts_utilises_niveau2") or ""
+        utilises = [valeur for valeur in texte.split(",") if valeur]
+        return {
+            "prompts_utilises_niveau2": utilises,
+            "niveau2_complete": bool(donnees.get("niveau2_complete")),
+        }
+    except Exception:
+        return {"prompts_utilises_niveau2": [], "niveau2_complete": False}
+
+
+def enregistrer_prompt_niveau2(user_id, index_prompt, utilises_actuels):
+    """Ajoute un prompt-modele a la liste de ceux deja essayes par l'utilisateur.
+    Des que 3 prompts-modeles differents ont ete utilises, le niveau est termine."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    index_str = str(index_prompt)
+    if index_str in utilises_actuels:
+        return
+    nouveaux = utilises_actuels + [index_str]
+    complete = len(set(nouveaux)) >= 3
+    try:
+        client = get_client()
+        client.table("users").update({
+            "prompts_utilises_niveau2": ",".join(nouveaux),
+            "niveau2_complete": complete,
+        }).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+
 def soumettre_demande_paiement(user_id, niveau, reference):
     client = get_client()
     client.table("demandes_paiement").insert({
@@ -438,6 +479,9 @@ if "ecran" not in st.session_state:
 
 if "onglet_auth_par_defaut" not in st.session_state:
     st.session_state.onglet_auth_par_defaut = "Connexion"
+
+if "niveau2_prompt_choisi" not in st.session_state:
+    st.session_state.niveau2_prompt_choisi = None
 
 # ----------------------------------------------------------------------
 # Ecran : Accueil
@@ -925,6 +969,39 @@ def ecran_utilisateur():
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
         # ---------------------------------------------------------------------
 
+        # --- Niveau 2 : usage guide (payant, apres le Niveau 1) ------------
+        niveau2_debloque = any(nom.startswith("Niveau 2") for nom in noms_debloques)
+        progression_niveau2 = (
+            charger_progression_niveau2(utilisateur.get("id"))
+            if progression_niveau1["niveau1_complete"] and niveau2_debloque
+            else {"prompts_utilises_niveau2": [], "niveau2_complete": True}
+        )
+
+        if progression_niveau1["niveau1_complete"] and niveau2_debloque and not progression_niveau2["niveau2_complete"]:
+            st.markdown("##### 🚀 Niveau 2 — Usage guide")
+            st.markdown(
+                "Voici des modeles de questions liees a votre metier. Cliquez-en un pour le "
+                "pre-remplir ci-dessous, modifiez-le si besoin, puis envoyez-le. "
+                "*Essayez-en au moins 3 differents pour terminer ce niveau.*"
+            )
+            prompts_modeles_niveau2 = [
+                f"Aide-moi a rediger un message professionnel pour expliquer a un client ce que fait un(e) {profession_utilisateur}",
+                f"Resume-moi une information complexe liee a mon metier de {profession_utilisateur}, en langage simple pour un client",
+                f"Aide-moi a preparer une liste de questions a poser a un client avant de commencer un travail de {profession_utilisateur}",
+                f"Donne-moi un plan simple pour organiser ma journee de travail en tant que {profession_utilisateur}",
+                f"Aide-moi a rediger une reponse polie a un client mecontent, dans le contexte de mon metier de {profession_utilisateur}",
+                f"Explique-moi comment un(e) {profession_utilisateur} peut utiliser l'IA pour gagner du temps sur les taches administratives",
+            ]
+            for index_modele, prompt_modele in enumerate(prompts_modeles_niveau2):
+                deja_utilise = str(index_modele) in progression_niveau2["prompts_utilises_niveau2"]
+                libelle = f"✓ {prompt_modele}" if deja_utilise else prompt_modele
+                if st.button(libelle, key=f"prompt_modele_niveau2_{index_modele}", use_container_width=True):
+                    st.session_state.question_assistant = prompt_modele
+                    st.session_state.niveau2_prompt_choisi = index_modele
+            st.caption(f"Prompts essayes : {len(set(progression_niveau2['prompts_utilises_niveau2']))}/3")
+            st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+        # ---------------------------------------------------------------------
+
         st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
             question_a_envoyer = st.session_state.get("question_assistant", "").strip()
@@ -954,6 +1031,22 @@ def ecran_utilisateur():
                                 "Bravo, vous avez fait vos premiers pas avec l'IA 🎉 "
                                 "Niveau 1 termine !"
                             )
+                        elif st.session_state.get("niveau2_prompt_choisi") is not None:
+                            enregistrer_prompt_niveau2(
+                                utilisateur.get("id"),
+                                st.session_state.niveau2_prompt_choisi,
+                                progression_niveau2["prompts_utilises_niveau2"],
+                            )
+                            nouveau_total = len(set(
+                                progression_niveau2["prompts_utilises_niveau2"]
+                                + [str(st.session_state.niveau2_prompt_choisi)]
+                            ))
+                            st.session_state.niveau2_prompt_choisi = None
+                            if nouveau_total >= 3:
+                                st.success(
+                                    "Vous maitrisez les bases de la demande precise 👏 "
+                                    "Niveau 2 termine !"
+                                )
                     except Exception as erreur:
                         st.error(f"L'assistant n'a pas pu repondre : {erreur}")
 
