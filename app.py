@@ -162,8 +162,9 @@ def generer_code_acces():
     return "-".join(groupes)
 
 
-def approuver_demande_paiement(demande_id, niveau, code):
-    """Cree le code d'acces pour le niveau demande et marque la demande comme approuvee."""
+def approuver_demande_paiement(demande_id, niveau, code, user_id=None):
+    """Cree le code d'acces pour le niveau demande et marque la demande comme approuvee.
+    Marque aussi les autres demandes en attente du meme utilisateur comme obsoletes."""
     client = get_client()
     client.table("codes_acces").insert({
         "code": code,
@@ -176,11 +177,29 @@ def approuver_demande_paiement(demande_id, niveau, code):
         "statut": "approuvee",
         "code_genere": code,
     }).eq("id", demande_id).execute()
+    if user_id is not None:
+        (
+            client.table("demandes_paiement")
+            .update({"statut": "obsolete"})
+            .eq("user_id", user_id)
+            .eq("statut", "en_attente")
+            .neq("id", demande_id)
+            .execute()
+        )
 
 
-def rejeter_demande_paiement(demande_id):
+def rejeter_demande_paiement(demande_id, user_id=None):
     client = get_client()
     client.table("demandes_paiement").update({"statut": "rejetee"}).eq("id", demande_id).execute()
+    if user_id is not None:
+        (
+            client.table("demandes_paiement")
+            .update({"statut": "obsolete"})
+            .eq("user_id", user_id)
+            .eq("statut", "en_attente")
+            .neq("id", demande_id)
+            .execute()
+        )
 
 
 def supprimer_compte(user_id):
@@ -641,7 +660,7 @@ def afficher_demandes_paiement(utilisateurs):
                     if st.button("Approuver et generer un code", key=f"btn_approuver_{demande['id']}", use_container_width=True):
                         try:
                             code = generer_code_acces()
-                            approuver_demande_paiement(demande["id"], demande["niveau"], code)
+                            approuver_demande_paiement(demande["id"], demande["niveau"], code, demande["user_id"])
                             st.session_state.dernier_code_genere = (
                                 f"Code genere pour {nom_client} : {code} — a transmettre par WhatsApp."
                             )
@@ -651,7 +670,7 @@ def afficher_demandes_paiement(utilisateurs):
             with col_rejeter:
                 if st.button("Rejeter", key=f"btn_rejeter_{demande['id']}", use_container_width=True):
                     try:
-                        rejeter_demande_paiement(demande["id"])
+                        rejeter_demande_paiement(demande["id"], demande["user_id"])
                         st.rerun()
                     except Exception as erreur:
                         st.error(f"Impossible de rejeter la demande : {erreur}")
@@ -663,7 +682,10 @@ def afficher_demandes_paiement(utilisateurs):
                 utilisateurs[["id", "nom", "email"]],
                 left_on="user_id", right_on="id", how="left", suffixes=("", "_utilisateur"),
             )
-        historique = historique[historique["statut"] != "en_attente"] if not historique.empty else historique
+        historique = (
+            historique[~historique["statut"].isin(["en_attente", "obsolete"])]
+            if not historique.empty else historique
+        )
 
         if historique.empty:
             st.caption("Aucune demande traitee pour le moment.")
