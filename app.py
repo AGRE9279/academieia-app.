@@ -50,12 +50,12 @@ def repondre_assistant_ia(question, profession, niveaux_debloques):
     contexte_metier = profession or "un metier technique"
     contexte_niveaux = ", ".join(niveaux_debloques) if niveaux_debloques else "aucun niveau debloque"
     prompt_systeme = (
-        f"Tu es l'assistant pedagogique d'AcademieIA, une plateforme de formation pour des "
-        f"professionnels ivoiriens du batiment (menuiserie aluminium, ebenisterie, et autres "
-        f"metiers techniques). L'utilisateur exerce le metier suivant : {contexte_metier}. "
+        f"Tu es l'assistant pedagogique d'AcademieIA, une plateforme qui apprend a des "
+        f"professionnels de tous les metiers a utiliser l'intelligence artificielle dans "
+        f"leur travail quotidien. L'utilisateur exerce le metier suivant : {contexte_metier}. "
         f"Il a acces aux niveaux suivants : {contexte_niveaux}. Reponds de facon claire, concrete "
-        f"et pratique, adaptee a son metier. Utilise des exemples chiffres quand c'est pertinent "
-        f"(calculs de quantites, devis, etc.). Reponds en francais."
+        f"et pratique, avec des exemples adaptes a son metier, pour lui montrer comment l'IA peut "
+        f"concretement l'aider au quotidien. Reponds en francais."
     )
     reponse = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -101,6 +101,41 @@ def charger_niveaux_utilisateur(user_id):
         return [ligne["niveau"] for ligne in reponse.data]
     except Exception:
         return []
+
+
+def charger_progression_niveau1(user_id):
+    """Charge la progression de l'utilisateur sur le Niveau 1 (nb de messages
+    envoyes a l'assistant, et si le niveau est termine)."""
+    if not SUPABASE_ACTIF or not user_id:
+        return {"messages_envoyes_niveau1": 0, "niveau1_complete": False}
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "messages_envoyes_niveau1, niveau1_complete"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        return {
+            "messages_envoyes_niveau1": donnees.get("messages_envoyes_niveau1") or 0,
+            "niveau1_complete": bool(donnees.get("niveau1_complete")),
+        }
+    except Exception:
+        return {"messages_envoyes_niveau1": 0, "niveau1_complete": False}
+
+
+def enregistrer_message_niveau1(user_id, nombre_actuel):
+    """Incremente le compteur de messages envoyes au Niveau 1. Des qu'un message
+    libre a ete envoye, le niveau est marque comme termine."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    nouveau_nombre = (nombre_actuel or 0) + 1
+    try:
+        client = get_client()
+        client.table("users").update({
+            "messages_envoyes_niveau1": nouveau_nombre,
+            "niveau1_complete": True,
+        }).eq("id", user_id).execute()
+    except Exception:
+        pass
 
 
 def soumettre_demande_paiement(user_id, niveau, reference):
@@ -863,10 +898,39 @@ def ecran_utilisateur():
             </div>""",
             unsafe_allow_html=True,
         )
-        st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment calculer la quantite de profiles alu pour une baie de 3m x 2m ?")
+
+        # --- Niveau 1 : prise en main --------------------------------------
+        progression_niveau1 = charger_progression_niveau1(utilisateur.get("id"))
+        profession_utilisateur = utilisateur.get("profession") or "votre metier"
+        question_a_envoyer = None
+
+        if not progression_niveau1["niveau1_complete"]:
+            st.markdown("##### 🎓 Niveau 1 — Prise en main")
+            st.markdown(
+                f"Vous etes **{profession_utilisateur}**. Decouvrons ensemble comment "
+                f"l'IA peut vous aider, en 3 essais simples : cliquez sur un exemple ci-dessous."
+            )
+            prompts_exemple_niveau1 = [
+                f"Explique-moi en 3 points ce que tu peux faire pour un(e) {profession_utilisateur}",
+                f"Donne-moi un exemple simple de tache que tu peux faire pour un(e) {profession_utilisateur}",
+                f"Aide-moi a resoudre un probleme courant que rencontre un(e) {profession_utilisateur}",
+            ]
+            for index_prompt, prompt_exemple in enumerate(prompts_exemple_niveau1):
+                if st.button(prompt_exemple, key=f"prompt_exemple_niveau1_{index_prompt}", use_container_width=True):
+                    question_a_envoyer = prompt_exemple
+            st.markdown(
+                "*Astuce : vous pouvez aussi ecrire votre propre question ci-dessous "
+                "pour terminer le Niveau 1.*"
+            )
+            st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+        # ---------------------------------------------------------------------
+
+        st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
-            question = st.session_state.get("question_assistant", "").strip()
-            if not question:
+            question_a_envoyer = st.session_state.get("question_assistant", "").strip()
+
+        if question_a_envoyer is not None:
+            if not question_a_envoyer:
                 st.warning("Ecris ta question avant d'envoyer.")
             elif not GROQ_ACTIF:
                 st.info("Assistant IA pas encore configure : ajoutez GROQ_API_KEY dans les secrets.")
@@ -874,13 +938,22 @@ def ecran_utilisateur():
                 with st.spinner("L'assistant reflechit..."):
                     try:
                         reponse = repondre_assistant_ia(
-                            question, utilisateur.get("profession"), noms_debloques
+                            question_a_envoyer, utilisateur.get("profession"), noms_debloques
                         )
                         st.markdown(
                             f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
                                         border-radius:8px;padding:14px 16px;margin-top:8px;'>{reponse}</div>""",
                             unsafe_allow_html=True,
                         )
+                        if not progression_niveau1["niveau1_complete"]:
+                            enregistrer_message_niveau1(
+                                utilisateur.get("id"),
+                                progression_niveau1["messages_envoyes_niveau1"],
+                            )
+                            st.success(
+                                "Bravo, vous avez fait vos premiers pas avec l'IA 🎉 "
+                                "Niveau 1 termine !"
+                            )
                     except Exception as erreur:
                         st.error(f"L'assistant n'a pas pu repondre : {erreur}")
 
