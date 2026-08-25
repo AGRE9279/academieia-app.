@@ -179,6 +179,41 @@ def enregistrer_prompt_niveau2(user_id, index_prompt, utilises_actuels):
         pass
 
 
+def charger_progression_niveau3(user_id):
+    """Charge la progression du Niveau 3 : nb d'echanges libres envoyes et si termine."""
+    if not SUPABASE_ACTIF or not user_id:
+        return {"messages_envoyes_niveau3": 0, "niveau3_complete": False}
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "messages_envoyes_niveau3, niveau3_complete"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        return {
+            "messages_envoyes_niveau3": donnees.get("messages_envoyes_niveau3") or 0,
+            "niveau3_complete": bool(donnees.get("niveau3_complete")),
+        }
+    except Exception:
+        return {"messages_envoyes_niveau3": 0, "niveau3_complete": False}
+
+
+def enregistrer_message_niveau3(user_id, nombre_actuel):
+    """Incremente le compteur d'echanges libres du Niveau 3. Termine des que 5 echanges
+    ont ete envoyes (le critere 'au moins 1 reformulation' est traite cote UI)."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    nouveau_nombre = (nombre_actuel or 0) + 1
+    complete = nouveau_nombre >= 5
+    try:
+        client = get_client()
+        client.table("users").update({
+            "messages_envoyes_niveau3": nouveau_nombre,
+            "niveau3_complete": complete,
+        }).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+
 def soumettre_demande_paiement(user_id, niveau, reference):
     client = get_client()
     client.table("demandes_paiement").insert({
@@ -1002,6 +1037,31 @@ def ecran_utilisateur():
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
         # ---------------------------------------------------------------------
 
+        # --- Niveau 3 : autonomie (payant, apres le Niveau 2) --------------
+        niveau3_debloque = any(nom.startswith("Niveau 3") for nom in noms_debloques)
+        niveau2_reellement_termine = not niveau2_debloque or progression_niveau2["niveau2_complete"]
+        progression_niveau3 = (
+            charger_progression_niveau3(utilisateur.get("id"))
+            if progression_niveau1["niveau1_complete"] and niveau2_reellement_termine and niveau3_debloque
+            else {"messages_envoyes_niveau3": 0, "niveau3_complete": True}
+        )
+
+        if (
+            progression_niveau1["niveau1_complete"]
+            and niveau2_reellement_termine
+            and niveau3_debloque
+            and not progression_niveau3["niveau3_complete"]
+        ):
+            st.markdown("##### 🧭 Niveau 3 — Autonomie")
+            st.markdown(
+                "Plus de modeles ici : ecrivez vos propres questions ci-dessous. "
+                "Astuce : soyez precis sur le contexte, donnez un exemple concret, et "
+                "si la reponse ne convient pas, reformulez votre question pour l'affiner."
+            )
+            st.caption(f"Echanges realises : {progression_niveau3['messages_envoyes_niveau3']}/5")
+            st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+        # ---------------------------------------------------------------------
+
         st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
             question_a_envoyer = st.session_state.get("question_assistant", "").strip()
@@ -1046,6 +1106,20 @@ def ecran_utilisateur():
                                 st.success(
                                     "Vous maitrisez les bases de la demande precise 👏 "
                                     "Niveau 2 termine !"
+                                )
+                        elif (
+                            niveau3_debloque
+                            and progression_niveau1["niveau1_complete"]
+                            and niveau2_reellement_termine
+                            and not progression_niveau3["niveau3_complete"]
+                        ):
+                            enregistrer_message_niveau3(
+                                utilisateur.get("id"),
+                                progression_niveau3["messages_envoyes_niveau3"],
+                            )
+                            if progression_niveau3["messages_envoyes_niveau3"] + 1 >= 5:
+                                st.success(
+                                    "Vous etes autonome avec l'IA 🚀 Niveau 3 termine !"
                                 )
                     except Exception as erreur:
                         st.error(f"L'assistant n'a pas pu repondre : {erreur}")
