@@ -526,10 +526,10 @@ def supprimer_compte(user_id):
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="AcademieIA", page_icon="🔷", layout="centered")
 
-PRIMARY_BLUE = "#185FA5"
-PRIMARY_YELLOW = "#EF9F27"
-PRIMARY_YELLOW_TEXT = "#412402"
-PRIMARY_YELLOW_LIGHT = "#FAEEDA"
+PRIMARY_BLUE = "#00BFAE"
+PRIMARY_YELLOW = "#E4002B"
+PRIMARY_YELLOW_TEXT = "#FFFFFF"
+PRIMARY_YELLOW_LIGHT = "#FDE8EB"
 
 st.markdown(
     f"""
@@ -545,7 +545,7 @@ st.markdown(
     }}
     .badge {{
         display: inline-block;
-        background-color: #E6F1FB;
+        background-color: #FDE8EB;
         color: {PRIMARY_BLUE};
         padding: 2px 10px;
         border-radius: 8px;
@@ -606,11 +606,6 @@ PROFESSIONS = ["Menuisier aluminium", "Ebeniste", "Autre profession technique"]
 # ----------------------------------------------------------------------
 MONTANT_DEBLOCAGE = "5 000 FCFA"
 
-# Les 4 niveaux sont payants et se debloquent dans l'ordre : il faut avoir
-# debloque le niveau precedent avant de pouvoir payer le suivant.
-# Les intitules s'adaptent au metier saisi par l'utilisateur a l'inscription
-# (champ texte libre) : on reconnait "menuiserie aluminium" et "ebenisterie",
-# et on retombe sur un parcours generique pour les autres metiers.
 NIVEAUX_PAR_PROFESSION = {
     "menuiserie_aluminium": [
         "Niveau 1 — Bases de la menuiserie aluminium",
@@ -644,8 +639,6 @@ def obtenir_niveaux(profession):
         cle = "generique"
     return [{"nom": nom, "prix": MONTANT_DEBLOCAGE} for nom in NIVEAUX_PAR_PROFESSION[cle]]
 
-# Ressources gratuites, accessibles a tous sans deblocage : liens vers les
-# tutoriels officiels du Centre de formation Google Workspace (en francais).
 COURS_OUTILS_GOOGLE = [
     {
         "titre": "Google Docs — Traitement de texte",
@@ -679,7 +672,6 @@ COURS_OUTILS_GOOGLE = [
     },
 ]
 
-# A adapter avec vos vrais numeros et montant
 NUMEROS_MOBILE_MONEY = [
     {"operateur": "Wave", "numero": "01 02 93 93 80"},
 ]
@@ -687,9 +679,6 @@ CONTACT_ADMIN_WHATSAPP = "01 02 93 93 80"
 
 
 
-# ----------------------------------------------------------------------
-# Donnees fictives (a remplacer par Supabase)
-# ----------------------------------------------------------------------
 if "utilisateurs" not in st.session_state:
     if SUPABASE_ACTIF:
         try:
@@ -708,10 +697,10 @@ if "utilisateurs" not in st.session_state:
         ])
 
 if "utilisateur_connecte" not in st.session_state:
-    st.session_state.utilisateur_connecte = None  # dict {nom, role, profession}
+    st.session_state.utilisateur_connecte = None
 
 if "ecran" not in st.session_state:
-    st.session_state.ecran = "accueil"  # accueil -> connexion / inscription -> dashboard
+    st.session_state.ecran = "accueil"
 
 if "onglet_auth_par_defaut" not in st.session_state:
     st.session_state.onglet_auth_par_defaut = "Connexion"
@@ -722,9 +711,6 @@ if "niveau2_prompt_choisi" not in st.session_state:
 if "niveau4_prompt_choisi" not in st.session_state:
     st.session_state.niveau4_prompt_choisi = None
 
-# ----------------------------------------------------------------------
-# Ecran : Accueil
-# ----------------------------------------------------------------------
 def ecran_accueil():
     col_gauche, col_centre, col_droite = st.columns([1, 2, 1])
     with col_centre:
@@ -765,9 +751,6 @@ def ecran_accueil():
             st.caption("Mode demo : configurez SUPABASE_URL et SUPABASE_ANON_KEY dans les secrets pour brancher la vraie base.")
 
 
-# ----------------------------------------------------------------------
-# Ecran : Connexion / Inscription
-# ----------------------------------------------------------------------
 def ecran_authentification():
     col_gauche, col_centre, col_droite = st.columns([1, 2, 1])
     with col_centre:
@@ -784,9 +767,6 @@ def ecran_authentification():
             </div>""",
             unsafe_allow_html=True,
         )
-        # Note : st.tabs ne permet pas de choisir l'onglet actif par defaut.
-        # L'onglet souhaite (st.session_state.onglet_auth_par_defaut) sert
-        # d'indication visuelle future si on remplace les tabs par des boutons.
         onglet_connexion, onglet_inscription = st.tabs(["Connexion", "Inscription"])
 
         with onglet_connexion:
@@ -908,6 +888,7 @@ def afficher_suppression_compte(comptes, cle_widget):
     if st.button("Supprimer definitivement ce compte", key=f"btn_suppr_{cle_widget}", disabled=not confirmation):
         try:
             supprimer_compte(options[choix_libelle])
+            st.session_state.pop("utilisateurs", None)
             st.session_state[f"dernier_compte_supprime_{cle_widget}"] = f"Compte {choix_libelle} supprime."
             st.rerun()
         except Exception as erreur:
@@ -1032,9 +1013,6 @@ def afficher_demandes_paiement(utilisateurs):
 
 
 
-# ----------------------------------------------------------------------
-# Ecran : Dashboard admin
-# ----------------------------------------------------------------------
 def ecran_admin():
     if st.session_state.get("erreur_supabase"):
         st.error(f"Erreur de connexion a Supabase : {st.session_state.erreur_supabase}")
@@ -1071,7 +1049,7 @@ def ecran_admin():
             messages_thread = charger_messages_utilisateur(cle_conversation_choisie)
             for message in messages_thread:
                 est_utilisateur = message.get("auteur") == "utilisateur"
-                couleur_fond = "var(--surface-2, #F7F7F5)" if est_utilisateur else "#E6F1FB"
+                couleur_fond = "var(--surface-2, #F7F7F5)" if est_utilisateur else "#FDE8EB"
                 libelle_auteur = noms_par_id.get(cle_conversation_choisie, "Utilisateur") if est_utilisateur else (message.get("auteur") or "Admin")
                 st.markdown(
                     f"""<div style='background:{couleur_fond};border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
@@ -1094,9 +1072,6 @@ def ecran_admin():
     st.caption("Un admin ne peut ni creer d'autres comptes admin ni voir le tableau de bord des admins.")
 
 
-# ----------------------------------------------------------------------
-# Ecran : Dashboard super_admin
-# ----------------------------------------------------------------------
 def ecran_super_admin():
     if st.session_state.get("erreur_supabase"):
         st.error(f"Erreur de connexion a Supabase : {st.session_state.erreur_supabase}")
@@ -1171,15 +1146,12 @@ def ecran_super_admin():
     st.dataframe(resultat[["nom", "profession", "role", "inscrit_le"]], use_container_width=True, hide_index=True)
 
 
-# ----------------------------------------------------------------------
-# Ecran : espace utilisateur (niveaux gratuit / payant)
-# ----------------------------------------------------------------------
 def ecran_utilisateur():
     utilisateur = st.session_state.utilisateur_connecte
     niveaux_debloques = charger_niveaux_utilisateur(utilisateur.get("id"))
 
     st.markdown(
-        f"""<div style='background:#E6F1FB;border-radius:12px;padding:12px 14px;margin-bottom:1rem;'>
+        f"""<div style='background:#FDE8EB;border-radius:12px;padding:12px 14px;margin-bottom:1rem;'>
             <p style='font-size:13px;margin:0;'>Bienvenue, <strong>{utilisateur.get('nom')}</strong></p>
             <p style='font-size:12px;margin:4px 0 0;color:var(--text-secondary);'>{utilisateur.get('profession') or '-'}</p>
         </div>""",
@@ -1220,7 +1192,7 @@ def ecran_utilisateur():
             st.caption("Aucun message pour l'instant. Ecrivez votre premiere question ci-dessous.")
         for message in messages_utilisateur:
             est_utilisateur = message.get("auteur") == "utilisateur"
-            couleur_fond = "#E6F1FB" if est_utilisateur else "var(--surface-2, #F7F7F5)"
+            couleur_fond = "#FDE8EB" if est_utilisateur else "var(--surface-2, #F7F7F5)"
             libelle_auteur = "Vous" if est_utilisateur else (message.get("auteur") or "Admin")
             st.markdown(
                 f"""<div style='background:{couleur_fond};border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
@@ -1259,7 +1231,6 @@ def ecran_utilisateur():
             unsafe_allow_html=True,
         )
 
-        # --- Niveau 1 : prise en main --------------------------------------
         progression_niveau1 = charger_progression_niveau1(utilisateur.get("id"))
         profession_utilisateur = utilisateur.get("profession") or "votre metier"
         question_a_envoyer = None
@@ -1283,9 +1254,7 @@ def ecran_utilisateur():
                 "pour terminer le Niveau 1.*"
             )
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-        # ---------------------------------------------------------------------
 
-        # --- Niveau 2 : usage guide (payant, apres le Niveau 1) ------------
         niveau2_debloque = any(nom.startswith("Niveau 2") for nom in noms_debloques)
         progression_niveau2 = (
             charger_progression_niveau2(utilisateur.get("id"))
@@ -1316,9 +1285,7 @@ def ecran_utilisateur():
                     st.session_state.niveau2_prompt_choisi = index_modele
             st.caption(f"Prompts essayes : {len(set(progression_niveau2['prompts_utilises_niveau2']))}/3")
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-        # ---------------------------------------------------------------------
 
-        # --- Niveau 3 : autonomie (payant, apres le Niveau 2) --------------
         niveau3_debloque = any(nom.startswith("Niveau 3") for nom in noms_debloques)
         niveau2_reellement_termine = not niveau2_debloque or progression_niveau2["niveau2_complete"]
         progression_niveau3 = (
@@ -1341,9 +1308,7 @@ def ecran_utilisateur():
             )
             st.caption(f"Echanges realises : {progression_niveau3['messages_envoyes_niveau3']}/5")
             st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-        # ---------------------------------------------------------------------
 
-        # --- Niveau 4 : maitrise (payant, dernier niveau) -------------------
         niveau4_debloque = any(nom.startswith("Niveau 4") for nom in noms_debloques)
         niveau3_reellement_termine = not niveau3_debloque or progression_niveau3["niveau3_complete"]
         progression_niveau4 = (
@@ -1411,7 +1376,6 @@ def ecran_utilisateur():
                         st.session_state.niveau4_prompt_choisi = index_avance
                 st.caption(f"Cas essayes : {len(set(progression_niveau4['prompts_utilises_niveau4']))}/3")
                 st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-        # ---------------------------------------------------------------------
 
         st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
         if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
@@ -1541,7 +1505,7 @@ def ecran_utilisateur():
 
             if debloque:
                 st.markdown(
-                    f"""<div style='background:#E6F1FB;border-left:4px solid {PRIMARY_BLUE};border-radius:8px;
+                    f"""<div style='background:#FDE8EB;border-left:4px solid {PRIMARY_BLUE};border-radius:8px;
                                 padding:12px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;'>
                         <span style='font-size:14px;font-weight:500;'>{nom_niveau}</span>
                         <span style='font-size:11px;background:{PRIMARY_BLUE};color:white;padding:3px 10px;border-radius:8px;'>Debloque</span>
@@ -1580,7 +1544,7 @@ def ecran_utilisateur():
 
                     st.markdown("**2. Envoyez la preuve de paiement**")
                     st.markdown(
-                        f"""<div style='background:#E6F1FB;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;'>
+                        f"""<div style='background:#FDE8EB;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;'>
                             Capture d'ecran a envoyer sur WhatsApp au <strong>{CONTACT_ADMIN_WHATSAPP}</strong>
                         </div>""",
                         unsafe_allow_html=True,
@@ -1626,9 +1590,6 @@ def ecran_utilisateur():
                             st.info("Mode demo : la validation de code necessite Supabase configure.")
 
 
-# ----------------------------------------------------------------------
-# Routage principal
-# ----------------------------------------------------------------------
 def entete_avec_deconnexion(titre_role):
     col_titre, col_bouton = st.columns([4, 1])
     with col_titre:
