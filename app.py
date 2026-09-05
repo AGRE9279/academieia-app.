@@ -391,6 +391,58 @@ def envoyer_message_support(user_id, auteur, contenu):
         pass
 
 
+def enregistrer_historique_question(user_id, question, reponse):
+    """Enregistre un echange question/reponse avec l'assistant IA dans l'historique."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    try:
+        client = get_client()
+        client.table("historique_questions").insert({
+            "user_id": user_id,
+            "question": question,
+            "reponse": reponse,
+        }).execute()
+    except Exception:
+        pass
+
+
+def charger_historique_utilisateur(user_id, limite=20):
+    """Charge les derniers echanges question/reponse de l'utilisateur, du plus recent au plus ancien."""
+    if not SUPABASE_ACTIF or not user_id:
+        return []
+    try:
+        client = get_client()
+        reponse = client.table("historique_questions").select("*").eq(
+            "user_id", user_id
+        ).order("cree_le", desc=True).limit(limite).execute()
+        return reponse.data or []
+    except Exception:
+        return []
+
+
+def charger_statistiques_globales():
+    """Charge des statistiques d'usage globales pour le tableau de bord admin :
+    nombre total de questions posees, et nombre d'utilisateurs ayant termine chaque niveau."""
+    if not SUPABASE_ACTIF:
+        return {"total_questions": 0, "niveau1_complete": 0, "niveau2_complete": 0, "niveau3_complete": 0, "niveau4_complete": 0}
+    try:
+        client = get_client()
+        total_questions = client.table("historique_questions").select("id", count="exact").execute().count or 0
+        reponse_niveaux = client.table("users").select(
+            "niveau1_complete, niveau2_complete, niveau3_complete, niveau4_complete"
+        ).eq("role", "utilisateur").execute()
+        lignes = reponse_niveaux.data or []
+        return {
+            "total_questions": total_questions,
+            "niveau1_complete": sum(1 for l in lignes if l.get("niveau1_complete")),
+            "niveau2_complete": sum(1 for l in lignes if l.get("niveau2_complete")),
+            "niveau3_complete": sum(1 for l in lignes if l.get("niveau3_complete")),
+            "niveau4_complete": sum(1 for l in lignes if l.get("niveau4_complete")),
+        }
+    except Exception:
+        return {"total_questions": 0, "niveau1_complete": 0, "niveau2_complete": 0, "niveau3_complete": 0, "niveau4_complete": 0}
+
+
 def charger_conversations_admin():
     """Regroupe tous les messages support par utilisateur, avec le dernier message
     et son horodatage, pour affichage dans le dashboard admin."""
@@ -567,7 +619,9 @@ st.markdown(
         color: {PRIMARY_YELLOW_TEXT} !important;
     }}
     [class*="st-key-tab_assistant_actif"] button,
-    [class*="st-key-tab_niveaux_actif"] button {{
+    [class*="st-key-tab_niveaux_actif"] button,
+    [class*="st-key-tab_historique_actif"] button,
+    [class*="st-key-tab_support_actif"] button {{
         background: transparent !important;
         color: {PRIMARY_YELLOW_TEXT} !important;
         border: none !important;
@@ -577,7 +631,9 @@ st.markdown(
         box-shadow: none !important;
     }}
     [class*="st-key-tab_assistant_inactif"] button,
-    [class*="st-key-tab_niveaux_inactif"] button {{
+    [class*="st-key-tab_niveaux_inactif"] button,
+    [class*="st-key-tab_historique_inactif"] button,
+    [class*="st-key-tab_support_inactif"] button {{
         background: transparent !important;
         color: #5f5e5a !important;
         border: none !important;
@@ -1034,6 +1090,16 @@ def ecran_admin():
 
         carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
 
+        st.markdown("**Statistiques d'usage**")
+        stats = charger_statistiques_globales()
+        col_stat1, col_stat2 = st.columns(2)
+        with col_stat1:
+            carte_metrique("Questions posees (total)", stats["total_questions"], PRIMARY_BLUE)
+            carte_metrique("Niveau 1 termine", stats["niveau1_complete"], PRIMARY_BLUE)
+        with col_stat2:
+            carte_metrique("Niveau 2 termine", stats["niveau2_complete"], PRIMARY_BLUE)
+            carte_metrique("Niveau 3 termine", stats["niveau3_complete"], PRIMARY_BLUE)
+
         st.markdown("**Utilisateurs**")
         recherche = st.text_input("Rechercher un utilisateur", key="recherche_admin", label_visibility="collapsed", placeholder="Rechercher un utilisateur")
         resultat = seulement_utilisateurs[seulement_utilisateurs["nom"].str.contains(recherche, case=False)] if recherche else seulement_utilisateurs
@@ -1098,6 +1164,17 @@ def ecran_super_admin():
             carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
         with col2:
             carte_metrique("Admins", len(seulement_admins), PRIMARY_YELLOW)
+
+        st.markdown("**Statistiques d'usage**")
+        stats = charger_statistiques_globales()
+        col_stat1, col_stat2 = st.columns(2)
+        with col_stat1:
+            carte_metrique("Questions posees (total)", stats["total_questions"], PRIMARY_BLUE)
+            carte_metrique("Niveau 1 termine", stats["niveau1_complete"], PRIMARY_BLUE)
+        with col_stat2:
+            carte_metrique("Niveau 2 termine", stats["niveau2_complete"], PRIMARY_BLUE)
+            carte_metrique("Niveau 3 termine", stats["niveau3_complete"], PRIMARY_BLUE)
+        carte_metrique("Niveau 4 termine (certificat)", stats["niveau4_complete"], PRIMARY_YELLOW)
 
         st.markdown("**Comptes admin**")
         st.dataframe(seulement_admins[["nom", "email"]], use_container_width=True, hide_index=True)
@@ -1177,7 +1254,7 @@ def ecran_utilisateur():
 
         niveaux = obtenir_niveaux(utilisateur.get("profession"))
 
-        col_tab1, col_tab2, col_tab3 = st.columns(3)
+        col_tab1, col_tab2, col_tab3, col_tab4 = st.columns(4)
         with col_tab1:
             cle = "tab_assistant_actif" if st.session_state.onglet_utilisateur_actif == "assistant" else "tab_assistant_inactif"
             with st.container(key=cle):
@@ -1191,6 +1268,12 @@ def ecran_utilisateur():
                     st.session_state.onglet_utilisateur_actif = "niveaux"
                     st.rerun()
         with col_tab3:
+            cle = "tab_historique_actif" if st.session_state.onglet_utilisateur_actif == "historique" else "tab_historique_inactif"
+            with st.container(key=cle):
+                if st.button("Historique", key="btn_onglet_historique", use_container_width=True):
+                    st.session_state.onglet_utilisateur_actif = "historique"
+                    st.rerun()
+        with col_tab4:
             cle = "tab_support_actif" if st.session_state.onglet_utilisateur_actif == "support" else "tab_support_inactif"
             with st.container(key=cle):
                 if st.button("Support", key="btn_onglet_support", use_container_width=True):
@@ -1199,7 +1282,25 @@ def ecran_utilisateur():
 
         st.markdown("<hr style='margin-top:0;'>", unsafe_allow_html=True)
 
-        if st.session_state.onglet_utilisateur_actif == "support":
+
+        if st.session_state.onglet_utilisateur_actif == "historique":
+            st.markdown("##### 🕘 Historique de vos questions")
+            historique = charger_historique_utilisateur(utilisateur.get("id"))
+            if not historique:
+                st.caption("Aucune question posee pour l'instant. Rendez-vous dans l'onglet Assistant IA.")
+            else:
+                for echange in historique:
+                    st.markdown(
+                        f"""<div style='background:var(--surface-2, #F7F7F5);border:0.5px solid var(--border, #E5E4E1);
+                                    border-radius:8px;padding:10px 12px;margin-bottom:10px;'>
+                            <p style='font-size:13px;font-weight:600;margin:0;'>{echange.get("question")}</p>
+                            <p style='font-size:11px;color:var(--text-secondary);margin:4px 0 6px;'>{echange.get("cree_le", "")[:16]}</p>
+                            <p style='font-size:13px;margin:0;color:var(--text-secondary);'>{echange.get("reponse")}</p>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+
+        elif st.session_state.onglet_utilisateur_actif == "support":
             st.markdown("##### 💬 Support — echangez avec un admin")
             messages_utilisateur = charger_messages_utilisateur(utilisateur.get("id"))
             if not messages_utilisateur:
@@ -1297,6 +1398,7 @@ def ecran_utilisateur():
                     if st.button(libelle, key=f"prompt_modele_niveau2_{index_modele}", use_container_width=True):
                         st.session_state.question_assistant = prompt_modele
                         st.session_state.niveau2_prompt_choisi = index_modele
+                        question_a_envoyer = prompt_modele
                 st.caption(f"Prompts essayes : {len(set(progression_niveau2['prompts_utilises_niveau2']))}/3")
                 st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
 
@@ -1388,8 +1490,29 @@ def ecran_utilisateur():
                         if st.button(libelle, key=f"prompt_avance_niveau4_{index_avance}", use_container_width=True):
                             st.session_state.question_assistant = prompt_avance
                             st.session_state.niveau4_prompt_choisi = index_avance
+                            question_a_envoyer = prompt_avance
                     st.caption(f"Cas essayes : {len(set(progression_niveau4['prompts_utilises_niveau4']))}/3")
                     st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
+
+            message_progression = None
+            if not progression_niveau1["niveau1_complete"]:
+                message_progression = "Vous debutez : posez une question ou cliquez un exemple ci-dessus pour terminer le Niveau 1."
+            elif niveau2_debloque and not progression_niveau2["niveau2_complete"]:
+                nb = len(set(progression_niveau2["prompts_utilises_niveau2"]))
+                message_progression = f"Niveau 2 en cours : {nb}/3 prompts essayes. Plus que {3 - nb} pour terminer !"
+            elif niveau3_debloque and not progression_niveau3["niveau3_complete"]:
+                nb = progression_niveau3["messages_envoyes_niveau3"]
+                message_progression = f"Niveau 3 en cours : {nb}/5 echanges. Plus que {5 - nb} pour terminer !"
+            elif niveau4_debloque and not progression_niveau4["niveau4_complete"]:
+                nb = len(set(progression_niveau4["prompts_utilises_niveau4"]))
+                message_progression = f"Niveau 4 en cours : {nb}/3 cas essayes. Plus que {3 - nb} pour obtenir votre certificat !"
+
+            if message_progression:
+                st.markdown(
+                    f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
+                                border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;'>{message_progression}</div>""",
+                    unsafe_allow_html=True,
+                )
 
             st.text_area("Posez votre question a l'assistant", key="question_assistant", placeholder="Ex : comment l'IA peut-elle m'aider dans mon metier ?")
             if st.button("Envoyer", key="btn_envoyer_question", use_container_width=True):
@@ -1417,6 +1540,7 @@ def ecran_utilisateur():
                                 unsafe_allow_html=True,
                             )
                             enregistrer_question_quota(utilisateur.get("id"), questions_utilisees_aujourdhui)
+                            enregistrer_historique_question(utilisateur.get("id"), question_a_envoyer, reponse)
                             if quota_max is not None and questions_utilisees_aujourdhui + 1 >= quota_max:
                                 st.warning(
                                     "⚠️ C'etait votre derniere question autorisee aujourd'hui. "
