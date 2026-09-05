@@ -375,8 +375,27 @@ def charger_messages_utilisateur(user_id):
         return []
 
 
+def limiter_messages_support(user_id, max_messages=4):
+    """Ne garde que les max_messages messages support les plus recents pour un utilisateur,
+    en supprimant les plus anciens au-dela de cette limite."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    try:
+        client = get_client()
+        reponse = client.table("messages_support").select("id").eq(
+            "user_id", user_id
+        ).order("cree_le", desc=True).execute()
+        ids = [ligne["id"] for ligne in (reponse.data or [])]
+        ids_a_supprimer = ids[max_messages:]
+        if ids_a_supprimer:
+            client.table("messages_support").delete().in_("id", ids_a_supprimer).execute()
+    except Exception:
+        pass
+
+
 def envoyer_message_support(user_id, auteur, contenu):
-    """Ajoute un message dans le fil de discussion support d'un utilisateur.
+    """Ajoute un message dans le fil de discussion support d'un utilisateur, puis ne garde
+    que les 4 derniers messages de ce fil (les plus anciens sont supprimes automatiquement).
     auteur : 'utilisateur' si envoye par l'utilisateur, sinon le nom de l'admin."""
     if not SUPABASE_ACTIF or not user_id or not contenu:
         return
@@ -387,12 +406,32 @@ def envoyer_message_support(user_id, auteur, contenu):
             "auteur": auteur,
             "contenu": contenu,
         }).execute()
+        limiter_messages_support(user_id)
+    except Exception:
+        pass
+
+
+def limiter_historique_questions(user_id, max_echanges=4):
+    """Ne garde que les max_echanges echanges d'historique les plus recents pour un utilisateur,
+    en supprimant les plus anciens au-dela de cette limite."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    try:
+        client = get_client()
+        reponse = client.table("historique_questions").select("id").eq(
+            "user_id", user_id
+        ).order("cree_le", desc=True).execute()
+        ids = [ligne["id"] for ligne in (reponse.data or [])]
+        ids_a_supprimer = ids[max_echanges:]
+        if ids_a_supprimer:
+            client.table("historique_questions").delete().in_("id", ids_a_supprimer).execute()
     except Exception:
         pass
 
 
 def enregistrer_historique_question(user_id, question, reponse):
-    """Enregistre un echange question/reponse avec l'assistant IA dans l'historique."""
+    """Enregistre un echange question/reponse avec l'assistant IA dans l'historique, puis ne
+    garde que les 4 derniers echanges (les plus anciens sont supprimes automatiquement)."""
     if not SUPABASE_ACTIF or not user_id:
         return
     try:
@@ -402,6 +441,7 @@ def enregistrer_historique_question(user_id, question, reponse):
             "question": question,
             "reponse": reponse,
         }).execute()
+        limiter_historique_questions(user_id)
     except Exception:
         pass
 
