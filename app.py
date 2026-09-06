@@ -122,6 +122,40 @@ def repondre_assistant_ia(question, profession, niveaux_debloques):
     )
     return reponse.choices[0].message.content
 
+
+def repondre_aide_appli(question):
+    """Interroge Groq avec un contexte fixe decrivant le fonctionnement d'AcademieIA,
+    pour aider l'utilisateur a naviguer et comprendre l'appli (pas ses questions de metier)."""
+    client = get_client_groq()
+    prompt_systeme = (
+        "Tu es le guide d'utilisation de l'application AcademieIA. Tu ne reponds PAS aux questions "
+        "de metier (ca c'est le role de l'Assistant IA de l'appli) : tu expliques uniquement comment "
+        "utiliser AcademieIA elle-meme. Voici comment l'appli fonctionne :\n\n"
+        "- L'appli a 4 niveaux payants et progressifs (Niveau 1 a 4), chacun coute 5 000 FCFA.\n"
+        "- Le Niveau 1 est gratuit et se termine en posant une premiere question a l'Assistant IA.\n"
+        "- Pour debloquer un niveau superieur : payer via Wave au numero indique dans l'onglet "
+        "'Mes niveaux', envoyer la preuve de paiement par WhatsApp a l'administrateur, attendre "
+        "qu'il genere un code d'acces, puis saisir ce code dans l'onglet 'Mes niveaux'.\n"
+        "- Chaque niveau debloque contient un quiz de validation (3 questions) : il faut tout "
+        "reussir pour pouvoir debloquer le niveau suivant.\n"
+        "- L'onglet 'Assistant IA' sert a poser des questions liees a son metier.\n"
+        "- L'onglet 'Mes niveaux' montre la progression et permet de payer/debloquer.\n"
+        "- L'onglet 'Historique' montre les questions deja posees a l'assistant.\n"
+        "- L'onglet 'Support' sert a envoyer un message a un administrateur en cas de probleme.\n"
+        "- A la fin du parcours (4 niveaux + quiz reussis), un certificat PDF est telechargeable.\n\n"
+        "Reponds toujours en francais, de facon simple et courte, en expliquant concretement quel "
+        "onglet ou quel bouton utiliser."
+    )
+    reponse = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": prompt_systeme},
+            {"role": "user", "content": question},
+        ],
+        max_tokens=400,
+    )
+    return reponse.choices[0].message.content
+
 # ----------------------------------------------------------------------
 # Connexion Supabase
 # ----------------------------------------------------------------------
@@ -661,7 +695,8 @@ st.markdown(
     [class*="st-key-tab_assistant_actif"] button,
     [class*="st-key-tab_niveaux_actif"] button,
     [class*="st-key-tab_historique_actif"] button,
-    [class*="st-key-tab_support_actif"] button {{
+    [class*="st-key-tab_support_actif"] button,
+    [class*="st-key-tab_aide_actif"] button {{
         background: transparent !important;
         color: {PRIMARY_YELLOW_TEXT} !important;
         border: none !important;
@@ -673,7 +708,8 @@ st.markdown(
     [class*="st-key-tab_assistant_inactif"] button,
     [class*="st-key-tab_niveaux_inactif"] button,
     [class*="st-key-tab_historique_inactif"] button,
-    [class*="st-key-tab_support_inactif"] button {{
+    [class*="st-key-tab_support_inactif"] button,
+    [class*="st-key-tab_aide_inactif"] button {{
         background: transparent !important;
         color: #5f5e5a !important;
         border: none !important;
@@ -1519,7 +1555,7 @@ def ecran_utilisateur():
 
         niveaux = obtenir_niveaux(utilisateur.get("profession"))
 
-        col_tab1, col_tab2, col_tab3, col_tab4 = st.columns(4)
+        col_tab1, col_tab2, col_tab3, col_tab4, col_tab5 = st.columns(5)
         with col_tab1:
             cle = "tab_assistant_actif" if st.session_state.onglet_utilisateur_actif == "assistant" else "tab_assistant_inactif"
             with st.container(key=cle):
@@ -1544,11 +1580,53 @@ def ecran_utilisateur():
                 if st.button("Support", key="btn_onglet_support", use_container_width=True):
                     st.session_state.onglet_utilisateur_actif = "support"
                     st.rerun()
+        with col_tab5:
+            cle = "tab_aide_actif" if st.session_state.onglet_utilisateur_actif == "aide" else "tab_aide_inactif"
+            with st.container(key=cle):
+                if st.button("Aide", key="btn_onglet_aide", use_container_width=True):
+                    st.session_state.onglet_utilisateur_actif = "aide"
+                    st.rerun()
 
         st.markdown("<hr style='margin-top:0;'>", unsafe_allow_html=True)
 
 
-        if st.session_state.onglet_utilisateur_actif == "historique":
+        if st.session_state.onglet_utilisateur_actif == "aide":
+            st.markdown("##### 🧭 Aide — comment utiliser AcademieIA")
+            st.caption("Ce chat repond a vos questions sur la navigation dans l'appli (pas sur votre metier).")
+            questions_frequentes = [
+                "Comment debloquer le Niveau 2 ?",
+                "Comment fonctionne le quiz ?",
+                "Ou voir mes anciennes questions ?",
+                "Comment contacter un administrateur ?",
+            ]
+            question_aide_a_poser = None
+            col_q1, col_q2 = st.columns(2)
+            for index_q, question_rapide in enumerate(questions_frequentes):
+                colonne = col_q1 if index_q % 2 == 0 else col_q2
+                with colonne:
+                    if st.button(question_rapide, key=f"aide_rapide_{index_q}", use_container_width=True):
+                        question_aide_a_poser = question_rapide
+            st.text_area("Ou posez votre propre question", key="question_aide", placeholder="Ex : comment obtenir mon certificat ?")
+            if st.button("Demander de l'aide", key="btn_envoyer_aide", use_container_width=True):
+                question_aide_a_poser = st.session_state.get("question_aide", "").strip()
+            if question_aide_a_poser is not None:
+                if not question_aide_a_poser:
+                    st.warning("Ecris ta question avant d'envoyer.")
+                elif not GROQ_ACTIF:
+                    st.info("Chat d'aide pas encore configure : ajoutez GROQ_API_KEY dans les secrets.")
+                else:
+                    with st.spinner("Recherche de la reponse..."):
+                        try:
+                            reponse_aide = repondre_aide_appli(question_aide_a_poser)
+                            st.markdown(
+                                f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                                            border-radius:8px;padding:14px 16px;margin-top:8px;'>{reponse_aide}</div>""",
+                                unsafe_allow_html=True,
+                            )
+                        except Exception as erreur:
+                            st.error(f"Le chat d'aide n'a pas pu repondre : {erreur}")
+
+        elif st.session_state.onglet_utilisateur_actif == "historique":
             st.markdown("##### 🕘 Historique de vos questions")
             historique = charger_historique_utilisateur(utilisateur.get("id"))
             if not historique:
