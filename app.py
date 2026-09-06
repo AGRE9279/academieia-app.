@@ -883,12 +883,23 @@ def afficher_quiz_niveau(numero_niveau, user_id):
         nb_correctes = sum(
             1 for choix, item in zip(reponses_choisies, questions) if choix == item["reponse_index"]
         )
-        if nb_correctes == len(questions):
+        note_sur_20 = round((nb_correctes / len(questions)) * 20, 1)
+        quiz_reussi_maintenant = nb_correctes == len(questions)
+        st.markdown(
+            f"""<div style='background:var(--surface-2, #F7F7F5);border-radius:8px;padding:10px 14px;margin:8px 0;'>
+                <p style='font-size:13px;margin:0;'>Resultat : <strong>{nb_correctes}/{len(questions)}</strong> bonnes reponses</p>
+                <p style='font-size:20px;font-weight:600;margin:4px 0 0;color:{PRIMARY_BLUE if quiz_reussi_maintenant else "#B3261E"};'>
+                    Note : {note_sur_20}/20
+                </p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        if quiz_reussi_maintenant:
             valider_quiz_reussi(user_id, numero_niveau)
-            st.success(f"Quiz du Niveau {numero_niveau} reussi ! Vous pouvez debloquer le niveau suivant.")
+            st.success(f"Felicitations, {note_sur_20}/20 ! Niveau {numero_niveau} valide, vous pouvez debloquer le niveau suivant.")
             return True
         else:
-            st.error(f"{nb_correctes}/{len(questions)} bonnes reponses. Reessayez pour valider ce quiz.")
+            st.error("Il faut toutes les bonnes reponses pour valider ce quiz. Reessayez !")
     return False
 
 
