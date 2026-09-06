@@ -1225,6 +1225,41 @@ def ecran_authentification():
                         )
                         st.success("Compte cree. Vous pouvez vous connecter.")
 
+        st.markdown("<hr style='margin:16px 0;'>", unsafe_allow_html=True)
+        with st.expander("🧭 Besoin d'aide pour vous inscrire ou vous connecter ?"):
+            questions_frequentes_auth = [
+                "Comment creer un compte ?",
+                "J'ai oublie mon mot de passe, que faire ?",
+                "Pourquoi mon email n'est pas reconnu ?",
+                "Que faire apres avoir cree mon compte ?",
+            ]
+            question_aide_auth_a_poser = None
+            col_qa1, col_qa2 = st.columns(2)
+            for index_qa, question_rapide_auth in enumerate(questions_frequentes_auth):
+                colonne_auth = col_qa1 if index_qa % 2 == 0 else col_qa2
+                with colonne_auth:
+                    if st.button(question_rapide_auth, key=f"aide_auth_rapide_{index_qa}", use_container_width=True):
+                        question_aide_auth_a_poser = question_rapide_auth
+            st.text_area("Ou posez votre propre question", key="question_aide_auth", placeholder="Ex : comment savoir si mon compte est bien cree ?")
+            if st.button("Demander de l'aide", key="btn_envoyer_aide_auth", use_container_width=True):
+                question_aide_auth_a_poser = st.session_state.get("question_aide_auth", "").strip()
+            if question_aide_auth_a_poser is not None:
+                if not question_aide_auth_a_poser:
+                    st.warning("Ecris ta question avant d'envoyer.")
+                elif not GROQ_ACTIF:
+                    st.info("Chat d'aide pas encore configure : ajoutez GROQ_API_KEY dans les secrets.")
+                else:
+                    with st.spinner("Recherche de la reponse..."):
+                        try:
+                            reponse_aide_auth = repondre_aide_appli(question_aide_auth_a_poser)
+                            st.markdown(
+                                f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                                            border-radius:8px;padding:14px 16px;margin-top:8px;'>{reponse_aide_auth}</div>""",
+                                unsafe_allow_html=True,
+                            )
+                        except Exception as erreur:
+                            st.error(f"Le chat d'aide n'a pas pu repondre : {erreur}")
+
 
 def afficher_suppression_compte(comptes, cle_widget):
     """Selecteur + bouton de suppression definitive d'un compte, avec confirmation obligatoire.
