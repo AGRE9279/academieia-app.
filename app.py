@@ -746,6 +746,217 @@ def obtenir_niveaux(profession):
         cle = "generique"
     return [{"nom": nom, "prix": MONTANT_DEBLOCAGE} for nom in NIVEAUX_PAR_PROFESSION[cle]]
 
+
+# ----------------------------------------------------------------------
+# Quiz de validation (un par niveau, obligatoire avant de debloquer le niveau suivant)
+# ----------------------------------------------------------------------
+QUIZ_PAR_NIVEAU = {
+    1: [
+        {
+            "question": "A quoi sert principalement l'assistant IA d'AcademieIA ?",
+            "options": ["A remplacer completement votre travail", "A vous aider dans vos taches quotidiennes", "A jouer a des jeux"],
+            "reponse_index": 1,
+        },
+        {
+            "question": "Pour obtenir une bonne reponse de l'IA, il vaut mieux :",
+            "options": ["Poser une question vague", "Donner du contexte precis sur votre besoin", "Ne rien ecrire"],
+            "reponse_index": 1,
+        },
+        {
+            "question": "Si la reponse de l'IA ne vous convient pas, vous pouvez :",
+            "options": ["Abandonner", "Reformuler votre question", "Fermer l'application definitivement"],
+            "reponse_index": 1,
+        },
+    ],
+    2: [
+        {
+            "question": "Un bon prompt (question a l'IA) doit surtout etre :",
+            "options": ["Court et vague", "Precis et contextualise", "Ecrit en majuscules"],
+            "reponse_index": 1,
+        },
+        {
+            "question": "Pour qu'une reponse soit utile a un client, il faut :",
+            "options": ["Adapter le langage a la situation", "Copier la reponse brute de l'IA sans relire", "Ignorer le contexte du client"],
+            "reponse_index": 0,
+        },
+        {
+            "question": "Essayer plusieurs prompts-modeles differents permet de :",
+            "options": ["Perdre du temps", "Decouvrir plusieurs facons d'utiliser l'IA", "Bloquer votre compte"],
+            "reponse_index": 1,
+        },
+    ],
+    3: [
+        {
+            "question": "Etre autonome avec l'IA signifie surtout :",
+            "options": ["Ne plus jamais poser de questions", "Savoir formuler ses propres questions sans modele", "Copier les questions des autres"],
+            "reponse_index": 1,
+        },
+        {
+            "question": "Si une reponse de l'IA est incomplete, la meilleure reaction est de :",
+            "options": ["L'accepter telle quelle", "Preciser ou reformuler la question", "Changer de sujet"],
+            "reponse_index": 1,
+        },
+        {
+            "question": "Donner un exemple concret dans votre question aide l'IA a :",
+            "options": ["Mieux comprendre votre besoin", "Se tromper davantage", "Repondre plus lentement"],
+            "reponse_index": 0,
+        },
+    ],
+    4: [
+        {
+            "question": "Combiner l'IA avec un tableur (Google Sheets) permet de :",
+            "options": ["Automatiser certaines taches repetitives", "Rendre le travail plus complique", "Remplacer completement le tableur"],
+            "reponse_index": 0,
+        },
+        {
+            "question": "Un document reutilisable genere avec l'IA doit surtout etre :",
+            "options": ["Adapte a votre metier et facilement modifiable", "Fige et jamais modifie", "Ecrit uniquement en anglais"],
+            "reponse_index": 0,
+        },
+        {
+            "question": "Le principal avantage de maitriser l'IA dans son metier est de :",
+            "options": ["Gagner du temps sur les taches courantes", "Travailler plus lentement", "Ne plus avoir besoin de clients"],
+            "reponse_index": 0,
+        },
+    ],
+}
+
+
+def charger_quiz_reussi(user_id):
+    """Charge, pour chaque niveau (1 a 4), si l'utilisateur a deja reussi le quiz de validation."""
+    if not SUPABASE_ACTIF or not user_id:
+        return {1: False, 2: False, 3: False, 4: False}
+    try:
+        client = get_client()
+        reponse = client.table("users").select(
+            "quiz1_reussi, quiz2_reussi, quiz3_reussi, quiz4_reussi"
+        ).eq("id", user_id).single().execute()
+        donnees = reponse.data or {}
+        return {
+            1: bool(donnees.get("quiz1_reussi")),
+            2: bool(donnees.get("quiz2_reussi")),
+            3: bool(donnees.get("quiz3_reussi")),
+            4: bool(donnees.get("quiz4_reussi")),
+        }
+    except Exception:
+        return {1: False, 2: False, 3: False, 4: False}
+
+
+def valider_quiz_reussi(user_id, numero_niveau):
+    """Marque le quiz d'un niveau comme reussi pour cet utilisateur."""
+    if not SUPABASE_ACTIF or not user_id:
+        return
+    try:
+        client = get_client()
+        client.table("users").update({f"quiz{numero_niveau}_reussi": True}).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+
+def afficher_quiz_niveau(numero_niveau, user_id):
+    """Affiche le quiz de validation d'un niveau (3 questions a choix multiples).
+    Retourne True si l'utilisateur vient de le reussir a l'instant (pour declencher un rerun)."""
+    questions = QUIZ_PAR_NIVEAU.get(numero_niveau, [])
+    if not questions:
+        return False
+    st.markdown(
+        f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
+                    border-radius:8px;padding:10px 14px;margin:8px 0;font-size:13px;'>
+            Repondez a ce petit quiz pour valider le Niveau {numero_niveau} et debloquer le niveau suivant.
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    reponses_choisies = []
+    for index_question, item in enumerate(questions):
+        choix = st.radio(
+            item["question"],
+            options=list(range(len(item["options"]))),
+            format_func=lambda i, opts=item["options"]: opts[i],
+            key=f"quiz_{numero_niveau}_{index_question}",
+            index=None,
+        )
+        reponses_choisies.append(choix)
+    if st.button(f"Valider le quiz du Niveau {numero_niveau}", key=f"btn_valider_quiz_{numero_niveau}", use_container_width=True):
+        if any(choix is None for choix in reponses_choisies):
+            st.warning("Repondez a toutes les questions avant de valider.")
+            return False
+        nb_correctes = sum(
+            1 for choix, item in zip(reponses_choisies, questions) if choix == item["reponse_index"]
+        )
+        if nb_correctes == len(questions):
+            valider_quiz_reussi(user_id, numero_niveau)
+            st.success(f"Quiz du Niveau {numero_niveau} reussi ! Vous pouvez debloquer le niveau suivant.")
+            return True
+        else:
+            st.error(f"{nb_correctes}/{len(questions)} bonnes reponses. Reessayez pour valider ce quiz.")
+    return False
+
+
+LECONS_PAR_NIVEAU = {
+    1: (
+        "L'intelligence artificielle est comme un(e) collegue disponible en permanence : elle ne remplace pas "
+        "votre savoir-faire, mais elle peut vous faire gagner du temps sur des taches precises (expliquer, "
+        "resumer, organiser, redi­ger). Pour bien commencer, essayez simplement de lui poser une question sur "
+        "votre metier, comme vous le feriez a un collegue curieux."
+    ),
+    2: (
+        "Plus votre question (ou 'prompt') est precise, meilleure sera la reponse. Une bonne question donne du "
+        "contexte : qui vous etes, ce que vous voulez obtenir, et pour qui. Comparez : 'Aide-moi' donne une "
+        "reponse vague, alors que 'Redige un message pour expliquer un retard de livraison a un client' donne "
+        "une reponse directement utilisable."
+    ),
+    3: (
+        "L'autonomie, c'est savoir formuler ses propres questions sans repartir d'un modele. Si la premiere "
+        "reponse ne convient pas, ce n'est pas un echec : reformulez, ajoutez un exemple concret, ou precisez ce "
+        "qui manque. Cet aller-retour fait partie normale de l'utilisation de l'IA."
+    ),
+    4: (
+        "La vraie maitrise vient quand vous combinez l'IA avec vos autres outils du quotidien (tableur, "
+        "documents, messages) pour automatiser des taches repetitives. L'objectif final n'est pas d'utiliser "
+        "l'IA pour l'IA, mais de l'integrer naturellement dans votre facon de travailler."
+    ),
+}
+
+
+def afficher_lecon_niveau(numero_niveau):
+    """Affiche le court texte pedagogique d'un niveau, avant les exercices pratiques."""
+    texte = LECONS_PAR_NIVEAU.get(numero_niveau)
+    if not texte:
+        return
+    st.markdown(
+        f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                    border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px;line-height:1.5;'>
+            {texte}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+OBJECTIFS_PAR_NIVEAU = {
+    1: "Decouvrir comment l'IA peut vous aider au quotidien",
+    2: "Apprendre a poser de bonnes questions a l'IA",
+    3: "Devenir autonome avec vos propres questions",
+    4: "Maitriser l'IA en la combinant a vos outils",
+}
+
+
+def afficher_apercu_parcours(niveaux):
+    """Affiche un apercu compact des 4 niveaux du parcours, pour montrer d'emblee
+    a l'utilisateur ou l'appli va l'emmener. N'affiche que le nom court et l'objectif."""
+    st.markdown("<p style='font-size:12px;font-weight:600;margin:0 0 8px;'>Votre parcours de formation</p>", unsafe_allow_html=True)
+    cartes = "".join(
+        f"""<div style='background:var(--surface-2, #F7F7F5);border-radius:8px;padding:8px 10px;margin-bottom:6px;
+                    display:flex;justify-content:space-between;align-items:center;gap:8px;'>
+            <span style='font-size:11px;font-weight:600;background:{PRIMARY_BLUE};color:white;border-radius:6px;
+                        padding:2px 7px;white-space:nowrap;'>Niveau {numero}</span>
+            <span style='font-size:12px;color:var(--text-secondary);flex:1;'>{objectif}</span>
+        </div>"""
+        for numero, objectif in OBJECTIFS_PAR_NIVEAU.items()
+    )
+    st.markdown(cartes, unsafe_allow_html=True)
+    st.markdown("<hr style='margin:8px 0 4px;'>", unsafe_allow_html=True)
+
+
 COURS_OUTILS_GOOGLE = [
     {
         "titre": "Google Docs — Traitement de texte",
@@ -1289,6 +1500,9 @@ def ecran_utilisateur():
             unsafe_allow_html=True,
         )
 
+        if not niveaux_debloques:
+            afficher_apercu_parcours(obtenir_niveaux(utilisateur.get("profession")))
+
         if "onglet_utilisateur_actif" not in st.session_state:
             st.session_state.onglet_utilisateur_actif = "assistant"
 
@@ -1392,6 +1606,7 @@ def ecran_utilisateur():
 
             if not progression_niveau1["niveau1_complete"]:
                 st.markdown("##### 🎓 Niveau 1 — Prise en main")
+                afficher_lecon_niveau(1)
                 st.markdown(
                     f"Vous etes **{profession_utilisateur}**. Decouvrons ensemble comment "
                     f"l'IA peut vous aider, en 3 essais simples : cliquez sur un exemple ci-dessous."
@@ -1419,6 +1634,7 @@ def ecran_utilisateur():
 
             if progression_niveau1["niveau1_complete"] and niveau2_debloque and not progression_niveau2["niveau2_complete"]:
                 st.markdown("##### 🚀 Niveau 2 — Usage guide")
+                afficher_lecon_niveau(2)
                 st.markdown(
                     "Voici des modeles de questions liees a votre metier. Cliquez-en un pour le "
                     "pre-remplir ci-dessous, modifiez-le si besoin, puis envoyez-le. "
@@ -1457,6 +1673,7 @@ def ecran_utilisateur():
                 and not progression_niveau3["niveau3_complete"]
             ):
                 st.markdown("##### 🧭 Niveau 3 — Autonomie")
+                afficher_lecon_niveau(3)
                 st.markdown(
                     "Plus de modeles ici : ecrivez vos propres questions ci-dessous. "
                     "Astuce : soyez precis sur le contexte, donnez un exemple concret, et "
@@ -1512,6 +1729,7 @@ def ecran_utilisateur():
                     st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
                 else:
                     st.markdown("##### 🏆 Niveau 4 — Maitrise")
+                    afficher_lecon_niveau(4)
                     st.markdown(
                         "Cas d'usage avances : combinez l'IA avec vos autres outils. "
                         "Cliquez-en un pour le pre-remplir, modifiez-le si besoin, puis envoyez-le. "
@@ -1676,10 +1894,15 @@ def ecran_utilisateur():
 
             st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
 
+            quiz_reussi = charger_quiz_reussi(utilisateur.get("id"))
+
             for index, niveau_actuel in enumerate(niveaux):
+                numero_niveau_actuel = index + 1
                 nom_niveau = niveau_actuel["nom"]
                 debloque = nom_niveau in niveaux_debloques
-                niveau_precedent_ok = index == 0 or niveaux[index - 1]["nom"] in niveaux_debloques
+                niveau_precedent_ok = index == 0 or (
+                    niveaux[index - 1]["nom"] in niveaux_debloques and quiz_reussi.get(index, False)
+                )
 
                 if debloque:
                     st.markdown(
@@ -1690,12 +1913,16 @@ def ecran_utilisateur():
                         </div>""",
                         unsafe_allow_html=True,
                     )
+                    if not quiz_reussi.get(numero_niveau_actuel, False):
+                        quiz_vient_de_reussir = afficher_quiz_niveau(numero_niveau_actuel, utilisateur.get("id"))
+                        if quiz_vient_de_reussir:
+                            st.rerun()
                 elif not niveau_precedent_ok:
                     st.markdown(
                         f"""<div style='background:var(--surface-2, #F1F1EF);border-left:4px solid var(--border, #D9D8D4);
                                     border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;opacity:0.7;'>
                             <span style='font-size:14px;font-weight:500;color:var(--text-secondary, #5f5e5a);'>🔒 {nom_niveau}</span>
-                            <span style='font-size:11px;color:var(--text-secondary, #5f5e5a);'>Terminez le niveau precedent</span>
+                            <span style='font-size:11px;color:var(--text-secondary, #5f5e5a);'>Reussissez le quiz du niveau precedent</span>
                         </div>""",
                         unsafe_allow_html=True,
                     )
