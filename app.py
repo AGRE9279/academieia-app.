@@ -2376,22 +2376,23 @@ def ecran_enseignant():
                         contenu_document = None
 
             if contenu_document:
+                bloc_style = (
+                    "<style>"
+                    ".bloc_document_genere table { width:100%; border-collapse:collapse; margin-top:10px; }"
+                    f".bloc_document_genere table th, .bloc_document_genere table td {{ border:1px solid #D9D8D4; padding:8px 10px; text-align:left; color:#1A1A1A; }}"
+                    f".bloc_document_genere table th {{ background:{PRIMARY_YELLOW_LIGHT}; color:#1A1A1A; }}"
+                    ".bloc_document_genere, .bloc_document_genere p, .bloc_document_genere li, "
+                    ".bloc_document_genere h1, .bloc_document_genere h2, .bloc_document_genere h3, "
+                    ".bloc_document_genere strong { color:#1A1A1A !important; }"
+                    "</style>"
+                )
+                bloc_ouverture = (
+                    f"<div class='bloc_document_genere' style='background:#FFFFFF;border:1px solid #D9D8D4;"
+                    f"border-left:4px solid {PRIMARY_BLUE};border-radius:8px;padding:16px 18px;"
+                    f"margin-top:8px;line-height:1.6;'>"
+                )
                 st.markdown(
-                    f"""<style>
-                    .bloc_document_genere table {{ width:100%; border-collapse:collapse; margin-top:10px; }}
-                    .bloc_document_genere table th, .bloc_document_genere table td {{
-                        border:1px solid #D9D8D4; padding:8px 10px; text-align:left; color:#1A1A1A;
-                    }}
-                    .bloc_document_genere table th {{ background:{PRIMARY_YELLOW_LIGHT}; color:#1A1A1A; }}
-                    .bloc_document_genere, .bloc_document_genere p, .bloc_document_genere li,
-                    .bloc_document_genere h1, .bloc_document_genere h2, .bloc_document_genere h3,
-                    .bloc_document_genere strong {{ color:#1A1A1A !important; }}
-                    </style>
-                    <div class='bloc_document_genere' style='background:#FFFFFF;border:1px solid #D9D8D4;
-                                border-left:4px solid {PRIMARY_BLUE};border-radius:8px;padding:16px 18px;
-                                margin-top:8px;line-height:1.6;'>
-                        {contenu_document}
-                    </div>""",
+                    bloc_style + bloc_ouverture + contenu_document + "</div>",
                     unsafe_allow_html=True,
                 )
                 if PDF_ACTIF:
