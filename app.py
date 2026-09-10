@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 import string
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 try:
     from supabase import create_client
@@ -42,15 +42,112 @@ def _texte_pdf_securise(texte):
     return (texte or "").encode("latin-1", errors="ignore").decode("latin-1")
 
 
+def _segments_gras(texte):
+    """Decoupe un texte en segments (texte, est_gras) selon les marqueurs **...**."""
+    segments = []
+    parties = texte.split("**")
+    for index, partie in enumerate(parties):
+        if partie == "":
+            continue
+        segments.append((partie, index % 2 == 1))
+    return segments or [("", False)]
+
+
+def _ecrire_segments_ligne(pdf, texte, taille=11):
+    """Ecrit une ligne de texte, en respectant les portions **en gras**."""
+    for morceau, est_gras in _segments_gras(texte):
+        pdf.set_font("Helvetica", style="B" if est_gras else "", size=taille)
+        pdf.write(6, _texte_pdf_securise(morceau))
+
+
+def _est_ligne_separateur_tableau(cellules):
+    """Detecte une ligne markdown du type |---|---|---| (separateur d'en-tete)."""
+    contenu = "".join(cellules).replace(" ", "")
+    return contenu != "" and set(contenu) <= set("-:")
+
+
+def _ecrire_tableau_pdf(pdf, lignes_tableau):
+    """Dessine un tableau (liste de listes de cellules) avec bordures et colonnes egales."""
+    if not lignes_tableau:
+        return
+    nb_colonnes = max(len(ligne) for ligne in lignes_tableau)
+    largeur_page = pdf.w - pdf.l_margin - pdf.r_margin
+    largeur_colonne = largeur_page / nb_colonnes
+    for index_ligne, ligne in enumerate(lignes_tableau):
+        ligne = ligne + [""] * (nb_colonnes - len(ligne))
+        pdf.set_font("Helvetica", style="B" if index_ligne == 0 else "", size=10)
+        x_debut = pdf.get_x()
+        y_debut = pdf.get_y()
+        hauteurs = []
+        for cellule in ligne:
+            nb_lignes_cellule = pdf.multi_cell(
+                largeur_colonne, 5, _texte_pdf_securise(cellule), border=0, split_only=True
+            )
+            hauteurs.append(max(1, len(nb_lignes_cellule)) * 5)
+        hauteur_ligne = max(hauteurs) if hauteurs else 6
+        if y_debut + hauteur_ligne > pdf.h - pdf.b_margin:
+            pdf.add_page()
+            y_debut = pdf.get_y()
+        for indice_colonne, cellule in enumerate(ligne):
+            pdf.set_xy(x_debut + indice_colonne * largeur_colonne, y_debut)
+            pdf.multi_cell(largeur_colonne, 5, _texte_pdf_securise(cellule), border=1)
+        pdf.set_xy(x_debut, y_debut + hauteur_ligne)
+
+
 def generer_pdf_texte(titre, corps):
-    """Genere un PDF simple (titre + corps de texte) et retourne les octets."""
+    """Genere un PDF (titre + corps) en interpretant une mise en forme markdown simple :
+    titres (#, ##, ###), gras (**texte**), listes a puces (- item) et tableaux (| a | b |)."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", style="B", size=14)
     pdf.multi_cell(0, 10, _texte_pdf_securise(titre))
     pdf.ln(4)
-    pdf.set_font("Helvetica", size=11)
-    pdf.multi_cell(0, 7, _texte_pdf_securise(corps))
+
+    lignes = (corps or "").split("\n")
+    tableau_courant = []
+    index = 0
+    while index < len(lignes):
+        ligne_brute = lignes[index]
+        ligne = ligne_brute.strip()
+
+        if ligne.startswith("|") and ligne.endswith("|"):
+            cellules = [c.strip() for c in ligne.strip("|").split("|")]
+            if not _est_ligne_separateur_tableau(cellules):
+                tableau_courant.append(cellules)
+            index += 1
+            continue
+        elif tableau_courant:
+            _ecrire_tableau_pdf(pdf, tableau_courant)
+            pdf.ln(4)
+            tableau_courant = []
+
+        if ligne.startswith("### "):
+            pdf.set_font("Helvetica", style="B", size=12)
+            pdf.multi_cell(0, 7, _texte_pdf_securise(ligne[4:]))
+            pdf.ln(2)
+        elif ligne.startswith("## "):
+            pdf.set_font("Helvetica", style="B", size=13)
+            pdf.multi_cell(0, 8, _texte_pdf_securise(ligne[3:]))
+            pdf.ln(2)
+        elif ligne.startswith("# "):
+            pdf.set_font("Helvetica", style="B", size=15)
+            pdf.multi_cell(0, 9, _texte_pdf_securise(ligne[2:]))
+            pdf.ln(2)
+        elif ligne.startswith("- ") or ligne.startswith("* "):
+            pdf.set_font("Helvetica", size=11)
+            pdf.write(6, "-  ")
+            _ecrire_segments_ligne(pdf, ligne[2:])
+            pdf.ln(7)
+        elif ligne == "":
+            pdf.ln(3)
+        else:
+            _ecrire_segments_ligne(pdf, ligne)
+            pdf.ln(7)
+        index += 1
+
+    if tableau_courant:
+        _ecrire_tableau_pdf(pdf, tableau_courant)
+
     sortie = pdf.output(dest="S")
     if isinstance(sortie, str):
         sortie = sortie.encode("latin-1")
@@ -930,6 +1027,37 @@ def enregistrer_document_genere(teacher_id, progression_id, semaine, type_docume
         "contenu": contenu,
     }).execute()
 
+
+def compter_documents_generes(teacher_id):
+    """Compte le nombre total de cours/devoirs deja generes par cet enseignant
+    (sert a determiner si l'essai gratuit est encore disponible)."""
+    if not SUPABASE_ACTIF or not teacher_id:
+        return 0
+    try:
+        client = get_client()
+        reponse = client.table("documents_generes").select("id", count="exact").eq("teacher_id", teacher_id).execute()
+        return reponse.count or 0
+    except Exception:
+        return 0
+
+
+def valider_code_abonnement_enseignant(code, teacher_id):
+    """Verifie un code d'acces (genere par un admin via 'Approuver' une demande de paiement)
+    et, s'il est valide et non utilise, active l'abonnement enseignant pour 30 jours."""
+    client = get_client()
+    reponse = client.table("codes_acces").select("*").eq("code", code).execute()
+    if not reponse.data:
+        return "invalide"
+    ligne = reponse.data[0]
+    if ligne.get("utilise"):
+        return "deja_utilise"
+    nouvelle_date_expiration = (date.today() + timedelta(days=30)).isoformat()
+    client.table("codes_acces").update({"utilise": 1}).eq("code", code).execute()
+    client.table("teacher_profiles").update(
+        {"abonnement_actif_jusqu_au": nouvelle_date_expiration}
+    ).eq("id", teacher_id).execute()
+    return "ok"
+
 # ----------------------------------------------------------------------
 # Configuration generale
 # ----------------------------------------------------------------------
@@ -1031,6 +1159,7 @@ PROFESSIONS = ["Menuisier aluminium", "Ebeniste", "Autre profession technique"]
 # Niveaux et paiement (mobile money)
 # ----------------------------------------------------------------------
 MONTANT_DEBLOCAGE = "5 000 FCFA"
+MONTANT_ABONNEMENT_ENSEIGNANT = "3 000 FCFA / mois"
 
 NIVEAUX_PAR_PROFESSION = {
     "menuiserie_aluminium": [
@@ -2408,6 +2537,78 @@ def ecran_utilisateur():
                                 st.info("Mode demo : la validation de code necessite Supabase configure.")
 
 
+def afficher_paywall_enseignant(teacher_id):
+    """Affiche le message d'abonnement expire et le parcours de paiement (Wave + code d'acces),
+    identique dans l'esprit au deblocage de niveau cote eleve."""
+    st.markdown(
+        f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
+                    border-radius:8px;padding:14px 16px;margin-bottom:12px;'>
+            <p style='font-size:14px;font-weight:600;margin:0;'>Essai gratuit termine</p>
+            <p style='font-size:13px;margin:4px 0 0;color:var(--text-secondary);'>
+                Abonnez-vous pour continuer a generer cours et devoirs sans limite ({MONTANT_ABONNEMENT_ENSEIGNANT}).
+            </p>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Comment s'abonner ?", expanded=True):
+        st.markdown("**1. Effectuez le paiement**")
+        cartes_numeros = "".join(
+            f"""<div style='background:var(--surface-2);border:0.5px solid var(--border);border-radius:8px;
+                        padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;'>
+                <span style='font-size:13px;'>{op['operateur']}</span>
+                <span style='font-size:13px;font-weight:600;color:{PRIMARY_BLUE};'>{op['numero']}</span>
+            </div>"""
+            for op in NUMEROS_MOBILE_MONEY
+        )
+        st.markdown(cartes_numeros, unsafe_allow_html=True)
+
+        st.markdown("**2. Envoyez la preuve de paiement**")
+        st.markdown(
+            f"""<div style='background:#FDE8EB;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;'>
+                Capture d'ecran a envoyer sur WhatsApp au <strong>{CONTACT_ADMIN_WHATSAPP}</strong>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("**3. Suivi de la demande** *(optionnel)*")
+        reference = st.text_input(
+            "Reference de transaction", key="reference_paiement_enseignant",
+            label_visibility="collapsed", placeholder="Reference de transaction (optionnel)",
+        )
+        if st.button("J'ai envoye le paiement", key="btn_soumettre_paiement_enseignant", use_container_width=True):
+            if SUPABASE_ACTIF:
+                try:
+                    soumettre_demande_paiement(teacher_id, "Abonnement enseignant", reference)
+                    st.success("Demande enregistree. L'administrateur va la traiter et vous envoyer un code.")
+                except Exception as erreur:
+                    st.error(f"Impossible d'enregistrer la demande : {erreur}")
+            else:
+                st.info("Mode demo : la demande ne peut pas etre enregistree sans Supabase configure.")
+
+        st.markdown("**4. Saisissez le code recu**")
+        code_saisi = st.text_input(
+            "Code d'acces", key="code_acces_enseignant",
+            label_visibility="collapsed", placeholder="Code d'acces",
+        )
+        if st.button("Valider le code", key="btn_valider_code_enseignant", use_container_width=True):
+            if not code_saisi:
+                st.error("Merci de saisir un code.")
+            elif SUPABASE_ACTIF:
+                try:
+                    resultat = valider_code_abonnement_enseignant(code_saisi.strip(), teacher_id)
+                    if resultat == "ok":
+                        st.success("Abonnement active pour 30 jours !")
+                        st.rerun()
+                    elif resultat == "deja_utilise":
+                        st.error("Ce code a deja ete utilise.")
+                    else:
+                        st.error("Code invalide.")
+                except Exception as erreur:
+                    st.error(f"Erreur lors de la validation : {erreur}")
+            else:
+                st.info("Mode demo : la validation de code necessite Supabase configure.")
+
+
 def ecran_enseignant():
     with st.container(key="fond_connecte"):
         utilisateur = st.session_state.utilisateur_connecte
@@ -2486,12 +2687,31 @@ def ecran_enseignant():
         )
 
         col_cours, col_devoir = st.columns(2)
+
+        nb_documents_deja_generes = compter_documents_generes(utilisateur.get("id"))
+        date_expiration_texte = profil.get("abonnement_actif_jusqu_au")
+        abonnement_expire = True
+        if date_expiration_texte:
+            try:
+                abonnement_expire = date.fromisoformat(str(date_expiration_texte)) < date.today()
+            except Exception:
+                abonnement_expire = True
+        acces_autorise = (nb_documents_deja_generes == 0) or (not abonnement_expire)
+
+        if nb_documents_deja_generes == 0:
+            st.caption("Essai gratuit : votre premier cours ou devoir genere est offert.")
+        elif not abonnement_expire:
+            st.caption(f"Abonnement actif jusqu'au {date_expiration_texte}.")
+
         with col_cours:
-            if st.button("Generer le cours", key="btn_generer_cours", use_container_width=True):
+            if st.button("Generer le cours", key="btn_generer_cours", use_container_width=True, disabled=not acces_autorise):
                 st.session_state["generation_en_cours"] = "cours"
         with col_devoir:
-            if st.button("Generer le devoir", key="btn_generer_devoir", use_container_width=True):
+            if st.button("Generer le devoir", key="btn_generer_devoir", use_container_width=True, disabled=not acces_autorise):
                 st.session_state["generation_en_cours"] = "devoir"
+
+        if not acces_autorise:
+            afficher_paywall_enseignant(utilisateur.get("id"))
 
         type_a_generer = st.session_state.get("generation_en_cours")
         if type_a_generer:
