@@ -2456,6 +2456,7 @@ def ecran_utilisateur():
                                     try:
                                         soumettre_demande_paiement(utilisateur.get("id"), nom_niveau, reference)
                                         st.success("Demande enregistree. L'administrateur va la traiter et vous envoyer un code.")
+                                        st.info("Merci de patienter : le traitement peut prendre quelques heures. Vous recevrez le code d'acces par WhatsApp, a saisir ci-dessous.")
                                     except Exception as erreur:
                                         st.error(f"Impossible d'enregistrer la demande : {erreur}")
                                 else:
@@ -2526,6 +2527,7 @@ def afficher_paywall_enseignant(teacher_id):
                 try:
                     soumettre_demande_paiement(teacher_id, "Abonnement enseignant", reference)
                     st.success("Demande enregistree. L'administrateur va la traiter et vous envoyer un code.")
+                    st.info("Merci de patienter : le traitement peut prendre quelques heures. Vous recevrez le code d'acces par WhatsApp, a saisir ci-dessous.")
                 except Exception as erreur:
                     st.error(f"Impossible d'enregistrer la demande : {erreur}")
             else:
