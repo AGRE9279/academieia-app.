@@ -2376,11 +2376,8 @@ def ecran_enseignant():
                         contenu_document = None
 
             if contenu_document:
-                st.markdown(
-                    f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
-                                border-radius:8px;padding:14px 16px;margin-top:8px;white-space:pre-wrap;'>{contenu_document}</div>""",
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.markdown(contenu_document)
                 if PDF_ACTIF:
                     st.download_button(
                         f"Telecharger le {type_a_generer} en PDF",
@@ -2432,3 +2429,4 @@ else:
     else:
         entete_avec_deconnexion("utilisateur")
         ecran_utilisateur()
+        
