@@ -1755,8 +1755,13 @@ def ecran_admin():
 
         utilisateurs = st.session_state.utilisateurs
         seulement_utilisateurs = utilisateurs[utilisateurs["role"] == "utilisateur"]
+        seulement_enseignants = utilisateurs[utilisateurs["role"] == "enseignant"]
 
-        carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
+        col_metrique1, col_metrique2 = st.columns(2)
+        with col_metrique1:
+            carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
+        with col_metrique2:
+            carte_metrique("Enseignants", len(seulement_enseignants), PRIMARY_BLUE)
 
         st.markdown("**Statistiques d'usage**")
         stats = charger_statistiques_globales()
@@ -1773,8 +1778,20 @@ def ecran_admin():
         resultat = seulement_utilisateurs[seulement_utilisateurs["nom"].str.contains(recherche, case=False)] if recherche else seulement_utilisateurs
         st.dataframe(resultat[["nom", "profession", "inscrit_le"]], use_container_width=True, hide_index=True)
 
+        st.markdown("**Enseignants**")
+        recherche_enseignant = st.text_input("Rechercher un enseignant", key="recherche_enseignant_admin", label_visibility="collapsed", placeholder="Rechercher un enseignant")
+        resultat_enseignants = (
+            seulement_enseignants[seulement_enseignants["nom"].str.contains(recherche_enseignant, case=False)]
+            if recherche_enseignant else seulement_enseignants
+        )
+        if resultat_enseignants.empty:
+            st.caption("Aucun enseignant inscrit pour le moment.")
+        else:
+            st.dataframe(resultat_enseignants[["nom", "profession", "inscrit_le"]], use_container_width=True, hide_index=True)
+
         with st.expander("Supprimer un compte utilisateur"):
-            afficher_suppression_compte(seulement_utilisateurs, "admin_utilisateur")
+            comptes_supprimables_admin = pd.concat([seulement_utilisateurs, seulement_enseignants], ignore_index=True)
+            afficher_suppression_compte(comptes_supprimables_admin, "admin_utilisateur")
 
         st.markdown("**Demandes de paiement en attente**")
         afficher_demandes_paiement(utilisateurs)
@@ -1826,11 +1843,14 @@ def ecran_super_admin():
         utilisateurs = st.session_state.utilisateurs
         seulement_utilisateurs = utilisateurs[utilisateurs["role"] == "utilisateur"]
         seulement_admins = utilisateurs[utilisateurs["role"] == "admin"]
+        seulement_enseignants = utilisateurs[utilisateurs["role"] == "enseignant"]
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             carte_metrique("Utilisateurs", len(seulement_utilisateurs), PRIMARY_YELLOW)
         with col2:
+            carte_metrique("Enseignants", len(seulement_enseignants), PRIMARY_BLUE)
+        with col3:
             carte_metrique("Admins", len(seulement_admins), PRIMARY_YELLOW)
 
         st.markdown("**Statistiques d'usage**")
@@ -1847,8 +1867,19 @@ def ecran_super_admin():
         st.markdown("**Comptes admin**")
         st.dataframe(seulement_admins[["nom", "email"]], use_container_width=True, hide_index=True)
 
-        with st.expander("Supprimer un compte (utilisateur ou admin)"):
-            comptes_supprimables = pd.concat([seulement_utilisateurs, seulement_admins], ignore_index=True)
+        st.markdown("**Enseignants**")
+        recherche_enseignant_super = st.text_input("Rechercher un enseignant", key="recherche_enseignant_super", label_visibility="collapsed", placeholder="Rechercher un enseignant")
+        resultat_enseignants_super = (
+            seulement_enseignants[seulement_enseignants["nom"].str.contains(recherche_enseignant_super, case=False)]
+            if recherche_enseignant_super else seulement_enseignants
+        )
+        if resultat_enseignants_super.empty:
+            st.caption("Aucun enseignant inscrit pour le moment.")
+        else:
+            st.dataframe(resultat_enseignants_super[["nom", "profession", "inscrit_le"]], use_container_width=True, hide_index=True)
+
+        with st.expander("Supprimer un compte (utilisateur, enseignant ou admin)"):
+            comptes_supprimables = pd.concat([seulement_utilisateurs, seulement_enseignants, seulement_admins], ignore_index=True)
             afficher_suppression_compte(comptes_supprimables, "super_admin_tous")
 
         st.markdown("**Demandes de paiement en attente**")
