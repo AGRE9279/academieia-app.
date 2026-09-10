@@ -416,7 +416,7 @@ def generer_progression_ia(matiere, niveau_classe, nb_semaines, extrait_programm
     )
     texte = reponse.choices[0].message.content.strip()
     texte = texte.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(texte)
+    return json.loads(texte, strict=False)
 
 
 def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_semaine, objectifs):
