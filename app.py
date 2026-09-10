@@ -12,6 +12,7 @@ les vraies requetes Supabase (table users, table admins) a la place.
 import streamlit as st
 import pandas as pd
 import hashlib
+import json
 import secrets
 import string
 from datetime import date, datetime
