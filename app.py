@@ -325,13 +325,6 @@ def generer_pdf_document_pedagogique(titre, contenu_markdown):
 # ----------------------------------------------------------------------
 # Connexion Groq (assistant IA)
 # ----------------------------------------------------------------------
-# Groq offre une API gratuite (avec quota) compatible avec des modeles Llama.
-# Cle a obtenir gratuitement sur https://console.groq.com/keys
-#
-# Secret attendu dans .streamlit/secrets.toml (ou secrets Streamlit Cloud) :
-#   GROQ_API_KEY = "gsk_..."
-#
-# Si absent, l'assistant reste en mode demo (message d'explication).
 GROQ_ACTIF = Groq is not None and "GROQ_API_KEY" in st.secrets
 
 
@@ -365,8 +358,7 @@ def repondre_assistant_ia(question, profession, niveaux_debloques):
 
 
 def repondre_aide_appli(question):
-    """Interroge Groq avec un contexte fixe decrivant le fonctionnement d'AcademieIA,
-    pour aider l'utilisateur a naviguer et comprendre l'appli (pas ses questions de metier)."""
+    """Interroge Groq avec un contexte fixe decrivant le fonctionnement d'AcademieIA."""
     client = get_client_groq()
     prompt_systeme = (
         "Tu es le guide d'utilisation de l'application AcademieIA. Tu ne reponds PAS aux questions "
@@ -458,16 +450,6 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
 # ----------------------------------------------------------------------
 # Connexion Supabase
 # ----------------------------------------------------------------------
-# Ta table "users" gere ses propres comptes (colonne password_hash, en SHA-256)
-# plutot que le systeme Supabase Auth. Le code ci-dessous lit/ecrit donc
-# directement dans cette table.
-#
-# Secrets attendus dans .streamlit/secrets.toml (ou secrets Streamlit Cloud) :
-#   SUPABASE_URL = "https://xxxxx.supabase.co"
-#   SUPABASE_ANON_KEY = "..."          # cle publique, suffisante ici car RLS
-#                                        est actuellement desactive sur users
-#
-# Si ces secrets ne sont pas presents, l'appli reste en mode demo (donnees fictives).
 SUPABASE_ACTIF = create_client is not None and "SUPABASE_URL" in st.secrets and "SUPABASE_ANON_KEY" in st.secrets
 
 
@@ -492,8 +474,6 @@ def charger_niveaux_utilisateur(user_id):
 
 
 def charger_progression_niveau1(user_id):
-    """Charge la progression de l'utilisateur sur le Niveau 1 (nb de messages
-    envoyes a l'assistant, et si le niveau est termine)."""
     if not SUPABASE_ACTIF or not user_id:
         return {"messages_envoyes_niveau1": 0, "niveau1_complete": False}
     try:
@@ -511,8 +491,6 @@ def charger_progression_niveau1(user_id):
 
 
 def enregistrer_message_niveau1(user_id, nombre_actuel):
-    """Incremente le compteur de messages envoyes au Niveau 1. Des qu'un message
-    libre a ete envoye, le niveau est marque comme termine."""
     if not SUPABASE_ACTIF or not user_id:
         return
     nouveau_nombre = (nombre_actuel or 0) + 1
@@ -526,16 +504,10 @@ def enregistrer_message_niveau1(user_id, nombre_actuel):
         pass
 
 
-# ------------------------------------------------------------------------
-# Quota quotidien de questions a l'assistant (selon le plus haut niveau
-# debloque). None = illimite.
-# ------------------------------------------------------------------------
 QUOTAS_PAR_NIVEAU = {0: 3, 1: 8, 2: 20, 3: 50, 4: None}
 
 
 def obtenir_quota_max(noms_debloques):
-    """Retourne le quota de questions/jour selon le plus haut niveau debloque
-    par l'utilisateur (0 = aucun niveau paye debloque). None = illimite."""
     niveau_max = 0
     for nom in noms_debloques or []:
         for numero in range(1, 5):
@@ -545,8 +517,6 @@ def obtenir_quota_max(noms_debloques):
 
 
 def charger_quota_utilisateur(user_id):
-    """Charge le compteur de questions du jour. Si la date enregistree n'est
-    pas celle d'aujourd'hui, le compteur est considere comme remis a zero."""
     if not SUPABASE_ACTIF or not user_id:
         return 0
     try:
@@ -563,8 +533,6 @@ def charger_quota_utilisateur(user_id):
 
 
 def enregistrer_question_quota(user_id, questions_utilisees_aujourdhui):
-    """Incremente le compteur de questions du jour (remet a 1 si on a change
-    de jour depuis la derniere question)."""
     if not SUPABASE_ACTIF or not user_id:
         return
     nouveau_nombre = (questions_utilisees_aujourdhui or 0) + 1
@@ -576,12 +544,9 @@ def enregistrer_question_quota(user_id, questions_utilisees_aujourdhui):
         }).eq("id", user_id).execute()
     except Exception:
         pass
-# ------------------------------------------------------------------------
 
 
 def charger_progression_niveau2(user_id):
-    """Charge la progression du Niveau 2 : liste des prompts-modeles deja utilises
-    (identifiants sous forme de texte separe par des virgules) et si le niveau est termine."""
     if not SUPABASE_ACTIF or not user_id:
         return {"prompts_utilises_niveau2": [], "niveau2_complete": False}
     try:
@@ -601,8 +566,6 @@ def charger_progression_niveau2(user_id):
 
 
 def enregistrer_prompt_niveau2(user_id, index_prompt, utilises_actuels):
-    """Ajoute un prompt-modele a la liste de ceux deja essayes par l'utilisateur.
-    Des que 3 prompts-modeles differents ont ete utilises, le niveau est termine."""
     if not SUPABASE_ACTIF or not user_id:
         return
     index_str = str(index_prompt)
@@ -621,7 +584,6 @@ def enregistrer_prompt_niveau2(user_id, index_prompt, utilises_actuels):
 
 
 def charger_progression_niveau3(user_id):
-    """Charge la progression du Niveau 3 : nb d'echanges libres envoyes et si termine."""
     if not SUPABASE_ACTIF or not user_id:
         return {"messages_envoyes_niveau3": 0, "niveau3_complete": False}
     try:
@@ -639,8 +601,6 @@ def charger_progression_niveau3(user_id):
 
 
 def enregistrer_message_niveau3(user_id, nombre_actuel):
-    """Incremente le compteur d'echanges libres du Niveau 3. Termine des que 5 echanges
-    ont ete envoyes (le critere 'au moins 1 reformulation' est traite cote UI)."""
     if not SUPABASE_ACTIF or not user_id:
         return
     nouveau_nombre = (nombre_actuel or 0) + 1
@@ -656,7 +616,6 @@ def enregistrer_message_niveau3(user_id, nombre_actuel):
 
 
 def charger_progression_niveau4(user_id):
-    """Charge la progression du Niveau 4 : cas d'usage avances deja essayes."""
     if not SUPABASE_ACTIF or not user_id:
         return {"prompts_utilises_niveau4": [], "niveau4_complete": False}
     try:
@@ -676,7 +635,6 @@ def charger_progression_niveau4(user_id):
 
 
 def enregistrer_prompt_niveau4(user_id, index_prompt, utilises_actuels):
-    """Ajoute un cas d'usage avance a la liste de ceux deja essayes. Termine a 3 essayes."""
     if not SUPABASE_ACTIF or not user_id:
         return
     index_str = str(index_prompt)
@@ -695,7 +653,6 @@ def enregistrer_prompt_niveau4(user_id, index_prompt, utilises_actuels):
 
 
 def charger_messages_utilisateur(user_id):
-    """Charge tout le fil de discussion support d'un utilisateur, du plus ancien au plus recent."""
     if not SUPABASE_ACTIF or not user_id:
         return []
     try:
@@ -709,8 +666,6 @@ def charger_messages_utilisateur(user_id):
 
 
 def limiter_messages_support(user_id, max_messages=4):
-    """Ne garde que les max_messages messages support les plus recents pour un utilisateur,
-    en supprimant les plus anciens au-dela de cette limite."""
     if not SUPABASE_ACTIF or not user_id:
         return
     try:
@@ -727,9 +682,6 @@ def limiter_messages_support(user_id, max_messages=4):
 
 
 def envoyer_message_support(user_id, auteur, contenu):
-    """Ajoute un message dans le fil de discussion support d'un utilisateur, puis ne garde
-    que les 4 derniers messages de ce fil (les plus anciens sont supprimes automatiquement).
-    auteur : 'utilisateur' si envoye par l'utilisateur, sinon le nom de l'admin."""
     if not SUPABASE_ACTIF or not user_id or not contenu:
         return
     try:
@@ -745,8 +697,6 @@ def envoyer_message_support(user_id, auteur, contenu):
 
 
 def limiter_historique_questions(user_id, max_echanges=4):
-    """Ne garde que les max_echanges echanges d'historique les plus recents pour un utilisateur,
-    en supprimant les plus anciens au-dela de cette limite."""
     if not SUPABASE_ACTIF or not user_id:
         return
     try:
@@ -763,8 +713,6 @@ def limiter_historique_questions(user_id, max_echanges=4):
 
 
 def enregistrer_historique_question(user_id, question, reponse):
-    """Enregistre un echange question/reponse avec l'assistant IA dans l'historique, puis ne
-    garde que les 4 derniers echanges (les plus anciens sont supprimes automatiquement)."""
     if not SUPABASE_ACTIF or not user_id:
         return
     try:
@@ -780,7 +728,6 @@ def enregistrer_historique_question(user_id, question, reponse):
 
 
 def charger_historique_utilisateur(user_id, limite=20):
-    """Charge les derniers echanges question/reponse de l'utilisateur, du plus recent au plus ancien."""
     if not SUPABASE_ACTIF or not user_id:
         return []
     try:
@@ -794,8 +741,6 @@ def charger_historique_utilisateur(user_id, limite=20):
 
 
 def charger_statistiques_globales():
-    """Charge des statistiques d'usage globales pour le tableau de bord admin :
-    nombre total de questions posees, et nombre d'utilisateurs ayant termine chaque niveau."""
     if not SUPABASE_ACTIF:
         return {"total_questions": 0, "niveau1_complete": 0, "niveau2_complete": 0, "niveau3_complete": 0, "niveau4_complete": 0}
     try:
@@ -817,8 +762,6 @@ def charger_statistiques_globales():
 
 
 def charger_conversations_admin():
-    """Regroupe tous les messages support par utilisateur, avec le dernier message
-    et son horodatage, pour affichage dans le dashboard admin."""
     if not SUPABASE_ACTIF:
         return []
     try:
@@ -879,7 +822,6 @@ def charger_utilisateurs_depuis_supabase():
 
 
 def charger_demandes_paiement(statut=None):
-    """Charge les demandes de paiement depuis Supabase (eventuellement filtrees par statut)."""
     if not SUPABASE_ACTIF:
         return pd.DataFrame()
     client = get_client()
@@ -893,15 +835,12 @@ def charger_demandes_paiement(statut=None):
 
 
 def generer_code_acces():
-    """Genere un code d'acces aleatoire lisible, du type ABCD-1234."""
     alphabet = string.ascii_uppercase + string.digits
     groupes = ["".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2)]
     return "-".join(groupes)
 
 
 def approuver_demande_paiement(demande_id, niveau, code, user_id=None):
-    """Cree le code d'acces pour le niveau demande et marque la demande comme approuvee.
-    Marque aussi les autres demandes en attente du meme utilisateur comme obsoletes."""
     client = get_client()
     client.table("codes_acces").insert({
         "code": code,
@@ -940,7 +879,6 @@ def rejeter_demande_paiement(demande_id, user_id=None):
 
 
 def supprimer_compte(user_id):
-    """Supprime definitivement un compte (utilisateur ou admin) et ses donnees liees."""
     client = get_client()
     client.table("demandes_paiement").delete().eq("user_id", user_id).execute()
     client.table("user_niveaux").delete().eq("user_id", user_id).execute()
@@ -1029,8 +967,6 @@ def enregistrer_document_genere(teacher_id, progression_id, semaine, type_docume
 
 
 def compter_documents_generes(teacher_id):
-    """Compte le nombre total de cours/devoirs deja generes par cet enseignant
-    (sert a determiner si l'essai gratuit est encore disponible)."""
     if not SUPABASE_ACTIF or not teacher_id:
         return 0
     try:
@@ -1042,8 +978,6 @@ def compter_documents_generes(teacher_id):
 
 
 def valider_code_abonnement_enseignant(code, teacher_id):
-    """Verifie un code d'acces (genere par un admin via 'Approuver' une demande de paiement)
-    et, s'il est valide et non utilise, active l'abonnement enseignant pour 30 jours."""
     client = get_client()
     reponse = client.table("codes_acces").select("*").eq("code", code).execute()
     if not reponse.data:
@@ -1159,7 +1093,7 @@ PROFESSIONS = ["Menuisier aluminium", "Ebeniste", "Autre profession technique"]
 # Niveaux et paiement (mobile money)
 # ----------------------------------------------------------------------
 MONTANT_DEBLOCAGE = "5 000 FCFA"
-MONTANT_ABONNEMENT_ENSEIGNANT = "3 000 FCFA / mois"
+MONTANT_ABONNEMENT_ENSEIGNANT = "5 000 FCFA / mois"
 
 NIVEAUX_PAR_PROFESSION = {
     "menuiserie_aluminium": [
@@ -1184,7 +1118,6 @@ NIVEAUX_PAR_PROFESSION = {
 
 
 def obtenir_niveaux(profession):
-    """Retourne les 4 niveaux (nom + prix) adaptes au metier saisi a l'inscription."""
     texte = (profession or "").lower()
     if "alu" in texte or "menuisier" in texte:
         cle = "menuiserie_aluminium"
@@ -1195,9 +1128,6 @@ def obtenir_niveaux(profession):
     return [{"nom": nom, "prix": MONTANT_DEBLOCAGE} for nom in NIVEAUX_PAR_PROFESSION[cle]]
 
 
-# ----------------------------------------------------------------------
-# Quiz de validation (un par niveau, obligatoire avant de debloquer le niveau suivant)
-# ----------------------------------------------------------------------
 QUIZ_PAR_NIVEAU = {
     1: [
         {
@@ -1271,7 +1201,6 @@ QUIZ_PAR_NIVEAU = {
 
 
 def charger_quiz_reussi(user_id):
-    """Charge, pour chaque niveau (1 a 4), si l'utilisateur a deja reussi le quiz de validation."""
     if not SUPABASE_ACTIF or not user_id:
         return {1: False, 2: False, 3: False, 4: False}
     try:
@@ -1291,7 +1220,6 @@ def charger_quiz_reussi(user_id):
 
 
 def valider_quiz_reussi(user_id, numero_niveau):
-    """Marque le quiz d'un niveau comme reussi pour cet utilisateur."""
     if not SUPABASE_ACTIF or not user_id:
         return
     try:
@@ -1302,8 +1230,6 @@ def valider_quiz_reussi(user_id, numero_niveau):
 
 
 def afficher_quiz_niveau(numero_niveau, user_id):
-    """Affiche le quiz de validation d'un niveau (3 questions a choix multiples).
-    Retourne True si l'utilisateur vient de le reussir a l'instant (pour declencher un rerun)."""
     questions = QUIZ_PAR_NIVEAU.get(numero_niveau, [])
     if not questions:
         return False
@@ -1378,7 +1304,6 @@ LECONS_PAR_NIVEAU = {
 
 
 def afficher_lecon_niveau(numero_niveau):
-    """Affiche le court texte pedagogique d'un niveau, avant les exercices pratiques."""
     texte = LECONS_PAR_NIVEAU.get(numero_niveau)
     if not texte:
         return
@@ -1400,8 +1325,6 @@ OBJECTIFS_PAR_NIVEAU = {
 
 
 def afficher_apercu_parcours(niveaux):
-    """Affiche un apercu compact des 4 niveaux du parcours, pour montrer d'emblee
-    a l'utilisateur ou l'appli va l'emmener. N'affiche que le nom court et l'objectif."""
     st.markdown("<p style='font-size:12px;font-weight:600;margin:0 0 8px;'>Votre parcours de formation</p>", unsafe_allow_html=True)
     cartes = "".join(
         f"""<div style='background:var(--surface-2, #F7F7F5);border-radius:8px;padding:8px 10px;margin-bottom:6px;
@@ -1680,8 +1603,6 @@ def ecran_authentification():
 
 
 def afficher_suppression_compte(comptes, cle_widget):
-    """Selecteur + bouton de suppression definitive d'un compte, avec confirmation obligatoire.
-    'comptes' est un DataFrame avec au moins les colonnes id, nom, email."""
     if not SUPABASE_ACTIF:
         st.info("Mode demo : la suppression de compte necessite Supabase configure.")
         return
@@ -1714,7 +1635,6 @@ def afficher_suppression_compte(comptes, cle_widget):
 
 
 def carte_metrique(titre, valeur, couleur=None):
-    """Carte de statistique stylee (remplace st.metric pour garder les couleurs de la marque)."""
     couleur = couleur or PRIMARY_BLUE
     st.markdown(
         f"""<div style='background:var(--surface-1, #f1efe8);border-radius:8px;padding:12px;
@@ -1727,9 +1647,6 @@ def carte_metrique(titre, valeur, couleur=None):
 
 
 def afficher_demandes_paiement(utilisateurs):
-    """Affiche les demandes de paiement en attente avec boutons Approuver / Rejeter,
-    et un historique separe des demandes deja traitees (approuvees/rejetees).
-    Reutilisable dans le dashboard admin et super_admin."""
     if not SUPABASE_ACTIF:
         st.info("Mode demo : la gestion des demandes de paiement necessite Supabase configure.")
         return
@@ -2538,8 +2455,6 @@ def ecran_utilisateur():
 
 
 def afficher_paywall_enseignant(teacher_id):
-    """Affiche le message d'abonnement expire et le parcours de paiement (Wave + code d'acces),
-    identique dans l'esprit au deblocage de niveau cote eleve."""
     st.markdown(
         f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
                     border-radius:8px;padding:14px 16px;margin-bottom:12px;'>
