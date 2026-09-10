@@ -157,6 +157,64 @@ def repondre_aide_appli(question):
     )
     return reponse.choices[0].message.content
 
+
+def generer_progression_ia(matiere, niveau_classe, nb_semaines, extrait_programme=None):
+    """Genere une progression annuelle via Groq, sous forme de liste de semaines."""
+    client = get_client_groq()
+    contexte_programme = (
+        f"Voici un extrait du programme officiel a respecter :\n{extrait_programme}\n\n"
+        if extrait_programme else
+        "Aucun programme officiel fourni : propose une progression standard et coherente.\n\n"
+    )
+    prompt_systeme = (
+        f"Tu es un conseiller pedagogique pour l'enseignement technique et professionnel. "
+        f"Genere une progression annuelle pour la matiere '{matiere}', niveau '{niveau_classe}', "
+        f"sur {nb_semaines} semaines. {contexte_programme}"
+        f"Reponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, au format exact :\n"
+        f'[{{"semaine": 1, "theme": "...", "objectifs": "..."}}, ...]\n'
+        f"Un objet par semaine, {nb_semaines} objets au total. Reponds en francais."
+    )
+    reponse = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": prompt_systeme},
+            {"role": "user", "content": "Genere la progression."},
+        ],
+        max_tokens=4000,
+    )
+    texte = reponse.choices[0].message.content.strip()
+    texte = texte.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(texte)
+
+
+def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_semaine, objectifs):
+    """Genere le cours ou le devoir d'une semaine donnee via Groq."""
+    client = get_client_groq()
+    if type_document == "cours":
+        consigne = (
+            "Redige un cours structure (objectifs pedagogiques, rappel de notions, deroule "
+            "de la seance, exemples concrets adaptes au metier) pret a etre utilise par un enseignant."
+        )
+    else:
+        consigne = (
+            "Redige un devoir ou une serie d'exercices (enonces clairs et, si pertinent, "
+            "un bareme indicatif) pour evaluer les eleves sur ce theme."
+        )
+    prompt_systeme = (
+        f"Tu es un conseiller pedagogique pour l'enseignement technique et professionnel. "
+        f"Matiere : {matiere}. Niveau : {niveau_classe}. Theme de la semaine : {theme_semaine}. "
+        f"Objectifs : {objectifs}. {consigne} Reponds en francais, de facon claire et structuree."
+    )
+    reponse = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": prompt_systeme},
+            {"role": "user", "content": f"Genere le {type_document}."},
+        ],
+        max_tokens=2000,
+    )
+    return reponse.choices[0].message.content
+
 # ----------------------------------------------------------------------
 # Connexion Supabase
 # ----------------------------------------------------------------------
@@ -647,6 +705,87 @@ def supprimer_compte(user_id):
     client.table("demandes_paiement").delete().eq("user_id", user_id).execute()
     client.table("user_niveaux").delete().eq("user_id", user_id).execute()
     client.table("users").delete().eq("id", user_id).execute()
+
+
+def charger_profil_enseignant(user_id):
+    if not SUPABASE_ACTIF or not user_id:
+        return None
+    try:
+        client = get_client()
+        reponse = client.table("teacher_profiles").select("*").eq("id", user_id).execute()
+        return reponse.data[0] if reponse.data else None
+    except Exception:
+        return None
+
+
+def enregistrer_profil_enseignant(user_id, matiere, niveau_classe, etablissement, nb_semaines, programme_url=None):
+    client = get_client()
+    client.table("teacher_profiles").upsert({
+        "id": user_id,
+        "matiere": matiere,
+        "niveau_classe": niveau_classe,
+        "etablissement": etablissement,
+        "nb_semaines": nb_semaines,
+        "programme_officiel_url": programme_url,
+    }).execute()
+
+
+def uploader_programme_pdf(user_id, fichier_pdf):
+    client = get_client()
+    chemin = f"programmes/{user_id}_{fichier_pdf.name}"
+    client.storage.from_("documents").upload(chemin, fichier_pdf.getvalue(), {"upsert": "true"})
+    return chemin
+
+
+def enregistrer_progression(teacher_id, contenu):
+    client = get_client()
+    reponse = client.table("progressions").insert({
+        "teacher_id": teacher_id,
+        "annee_scolaire": f"{date.today().year}-{date.today().year + 1}",
+        "contenu": contenu,
+    }).execute()
+    return reponse.data[0] if reponse.data else None
+
+
+def charger_derniere_progression(teacher_id):
+    if not SUPABASE_ACTIF or not teacher_id:
+        return None
+    try:
+        client = get_client()
+        reponse = (
+            client.table("progressions").select("*").eq("teacher_id", teacher_id)
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        return reponse.data[0] if reponse.data else None
+    except Exception:
+        return None
+
+
+def charger_document_genere(teacher_id, progression_id, semaine, type_document):
+    if not SUPABASE_ACTIF:
+        return None
+    try:
+        client = get_client()
+        reponse = (
+            client.table("documents_generes").select("*")
+            .eq("teacher_id", teacher_id).eq("progression_id", progression_id)
+            .eq("semaine", semaine).eq("type", type_document)
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        return reponse.data[0] if reponse.data else None
+    except Exception:
+        return None
+
+
+def enregistrer_document_genere(teacher_id, progression_id, semaine, type_document, contenu):
+    client = get_client()
+    client.table("documents_generes").insert({
+        "teacher_id": teacher_id,
+        "progression_id": progression_id,
+        "semaine": semaine,
+        "type": type_document,
+        "contenu": contenu,
+    }).execute()
 
 # ----------------------------------------------------------------------
 # Configuration generale
@@ -1179,14 +1318,20 @@ def ecran_authentification():
         with onglet_inscription:
             nom = st.text_input("Nom complet", key="signup_nom", placeholder="Kouassi Yao")
             email_inscription = st.text_input("Email", key="signup_email", placeholder="nom@etablissement.ci")
-            profession = st.text_input("Profession", key="signup_profession", placeholder="Ex : menuisier aluminium, plombier, electricien...")
+            role_inscription = st.selectbox("Vous etes :", ["Un(e) professionnel(le)", "Un(e) enseignant(e)"], key="signup_role")
+            est_enseignant = role_inscription == "Un(e) enseignant(e)"
+            profession = st.text_input(
+                "Profession" if not est_enseignant else "Matiere enseignee (optionnel ici, a preciser ensuite)",
+                key="signup_profession",
+                placeholder="Ex : menuisier aluminium, plombier, electricien..." if not est_enseignant else "Ex : Menuiserie aluminium",
+            )
             mdp_inscription = st.text_input("Mot de passe", key="signup_mdp", type="password")
 
             st.caption("Les comptes admin sont crees uniquement par un super administrateur.")
 
             with st.container(key="bouton_jaune_signup"):
                 if st.button("Creer mon compte", key="btn_signup", use_container_width=True):
-                    if not nom or not email_inscription or not profession or not mdp_inscription:
+                    if not nom or not email_inscription or not mdp_inscription or (not est_enseignant and not profession):
                         st.error("Merci de remplir tous les champs.")
                     elif SUPABASE_ACTIF:
                         try:
@@ -1205,7 +1350,7 @@ def ecran_authentification():
                                     "nom": nom,
                                     "email": email_inscription,
                                     "profession": profession,
-                                    "role": "utilisateur",
+                                    "role": "enseignant" if est_enseignant else "utilisateur",
                                     "password_hash": hasher_mot_de_passe(mdp_inscription),
                                     "created_at": datetime.now().isoformat(),
                                 }, returning="minimal").execute()
@@ -1217,7 +1362,7 @@ def ecran_authentification():
                             "nom": nom,
                             "email": email_inscription,
                             "profession": profession,
-                            "role": "utilisateur",
+                            "role": "enseignant" if est_enseignant else "utilisateur",
                             "inscrit_le": str(date.today()),
                         }
                         st.session_state.utilisateurs = pd.concat(
@@ -2120,6 +2265,132 @@ def ecran_utilisateur():
                                 st.info("Mode demo : la validation de code necessite Supabase configure.")
 
 
+def ecran_enseignant():
+    with st.container(key="fond_connecte"):
+        utilisateur = st.session_state.utilisateur_connecte
+        profil = charger_profil_enseignant(utilisateur.get("id"))
+
+        if not profil:
+            st.markdown("##### Configuration de votre espace enseignant")
+            st.caption("Renseignez ces informations une seule fois pour generer votre progression.")
+            with st.form("form_config_enseignant"):
+                matiere = st.text_input("Matiere enseignee", placeholder="Ex : Menuiserie aluminium")
+                niveau_classe = st.text_input("Niveau / classe", placeholder="Ex : Terminale MSMA")
+                etablissement = st.text_input("Etablissement (optionnel)")
+                nb_semaines = st.number_input("Nombre de semaines dans l'annee scolaire", min_value=10, max_value=40, value=32)
+                programme_pdf = st.file_uploader("Programme officiel (PDF, optionnel)", type=["pdf"])
+                soumis = st.form_submit_button("Enregistrer et generer ma progression")
+
+            if soumis:
+                if not matiere or not niveau_classe:
+                    st.error("Merci de renseigner au moins la matiere et le niveau.")
+                elif not SUPABASE_ACTIF:
+                    st.info("Mode demo : la configuration necessite Supabase configure.")
+                else:
+                    try:
+                        programme_url = None
+                        if programme_pdf is not None:
+                            programme_url = uploader_programme_pdf(utilisateur.get("id"), programme_pdf)
+                        enregistrer_profil_enseignant(
+                            utilisateur.get("id"), matiere, niveau_classe, etablissement, nb_semaines, programme_url
+                        )
+                        st.session_state.declencher_generation_progression = True
+                        st.rerun()
+                    except Exception as erreur:
+                        st.error(f"Impossible d'enregistrer votre profil : {erreur}")
+            return
+
+        progression = charger_derniere_progression(utilisateur.get("id"))
+
+        if not progression or st.session_state.get("declencher_generation_progression"):
+            st.markdown("##### Generation de votre progression annuelle")
+            if not GROQ_ACTIF:
+                st.info("Generation IA pas encore configuree : ajoutez GROQ_API_KEY dans les secrets.")
+                return
+            with st.spinner("Generation de la progression en cours (peut prendre une minute)..."):
+                try:
+                    contenu = generer_progression_ia(profil["matiere"], profil["niveau_classe"], profil["nb_semaines"])
+                    progression = enregistrer_progression(utilisateur.get("id"), contenu)
+                    st.session_state.declencher_generation_progression = False
+                    st.success("Progression generee !")
+                    st.rerun()
+                except Exception as erreur:
+                    st.error(f"Impossible de generer la progression : {erreur}")
+                    return
+
+        st.markdown(
+            f"""<div style='background:#FDE8EB;border-radius:12px;padding:12px 14px;margin-bottom:1rem;'>
+                <p style='font-size:13px;margin:0;'><strong>{profil['matiere']}</strong> — {profil['niveau_classe']}</p>
+                <p style='font-size:12px;margin:4px 0 0;color:var(--text-secondary);'>{profil.get('etablissement') or ''}</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        contenu_progression = progression["contenu"]
+        semaines_options = [f"Semaine {ligne['semaine']} — {ligne['theme']}" for ligne in contenu_progression]
+        semaine_choisie_index = st.selectbox(
+            "Choisir une semaine", options=range(len(contenu_progression)),
+            format_func=lambda i: semaines_options[i], key="semaine_enseignant_choisie",
+        )
+        ligne_semaine = contenu_progression[semaine_choisie_index]
+
+        st.markdown(
+            f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                        border-radius:8px;padding:12px 14px;margin:10px 0;'>
+                <p style='font-size:13px;margin:0;'><strong>Objectifs :</strong> {ligne_semaine.get('objectifs')}</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        col_cours, col_devoir = st.columns(2)
+        with col_cours:
+            if st.button("Generer le cours", key="btn_generer_cours", use_container_width=True):
+                st.session_state["generation_en_cours"] = "cours"
+        with col_devoir:
+            if st.button("Generer le devoir", key="btn_generer_devoir", use_container_width=True):
+                st.session_state["generation_en_cours"] = "devoir"
+
+        type_a_generer = st.session_state.get("generation_en_cours")
+        if type_a_generer:
+            document_existant = charger_document_genere(
+                utilisateur.get("id"), progression["id"], ligne_semaine["semaine"], type_a_generer
+            )
+            if document_existant:
+                contenu_document = document_existant["contenu"]
+            elif not GROQ_ACTIF:
+                st.info("Generation IA pas encore configuree : ajoutez GROQ_API_KEY dans les secrets.")
+                contenu_document = None
+            else:
+                with st.spinner(f"Generation du {type_a_generer} en cours..."):
+                    try:
+                        contenu_document = generer_document_cours_devoir(
+                            type_a_generer, profil["matiere"], profil["niveau_classe"],
+                            ligne_semaine["theme"], ligne_semaine["objectifs"],
+                        )
+                        enregistrer_document_genere(
+                            utilisateur.get("id"), progression["id"], ligne_semaine["semaine"],
+                            type_a_generer, contenu_document,
+                        )
+                    except Exception as erreur:
+                        st.error(f"Impossible de generer le {type_a_generer} : {erreur}")
+                        contenu_document = None
+
+            if contenu_document:
+                st.markdown(
+                    f"""<div style='background:var(--surface-2, #F7F7F5);border-left:4px solid {PRIMARY_BLUE};
+                                border-radius:8px;padding:14px 16px;margin-top:8px;white-space:pre-wrap;'>{contenu_document}</div>""",
+                    unsafe_allow_html=True,
+                )
+                if PDF_ACTIF:
+                    st.download_button(
+                        f"Telecharger le {type_a_generer} en PDF",
+                        data=generer_pdf_texte(f"{profil['matiere']} — {ligne_semaine['theme']}", contenu_document),
+                        file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.pdf",
+                        mime="application/pdf",
+                        key=f"telecharger_{type_a_generer}_{ligne_semaine['semaine']}",
+                    )
+
+
 def entete_avec_deconnexion(titre_role):
     col_titre, col_bouton = st.columns([4, 1])
     with col_titre:
@@ -2155,6 +2426,9 @@ else:
     elif role == "admin":
         entete_avec_deconnexion("admin")
         ecran_admin()
+    elif role == "enseignant":
+        entete_avec_deconnexion("enseignant")
+        ecran_enseignant()
     else:
         entete_avec_deconnexion("utilisateur")
         ecran_utilisateur()
