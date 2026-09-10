@@ -13,6 +13,7 @@ import streamlit as st
 import pandas as pd
 import hashlib
 import json
+import re
 import secrets
 import string
 from datetime import date, datetime
@@ -77,6 +78,148 @@ def generer_pdf_certificat(nom_utilisateur, profession):
     pdf.ln(14)
     pdf.set_font("Helvetica", size=10)
     pdf.multi_cell(0, 7, _texte_pdf_securise(f"Delivre le {date.today().strftime('%d/%m/%Y')}"), align="C")
+    sortie = pdf.output(dest="S")
+    if isinstance(sortie, str):
+        sortie = sortie.encode("latin-1")
+    return bytes(sortie)
+
+
+def _hauteur_lignes_cellule(pdf, texte, largeur, hauteur_ligne):
+    lignes = pdf.multi_cell(largeur, hauteur_ligne, texte, dry_run=True, output="LINES")
+    return max(1, len(lignes)) * hauteur_ligne
+
+
+def _dessiner_tableau_pdf(pdf, rangees):
+    """Dessine un tableau borde avec en-tete colore a partir d'une liste de lignes
+    (chaque ligne etant une liste de textes de cellules, deja de meme longueur)."""
+    nb_colonnes = len(rangees[0])
+    largeur_page = pdf.w - pdf.l_margin - pdf.r_margin
+    largeur_col = largeur_page / nb_colonnes
+    hauteur_ligne = 5.5
+
+    for index_rangee, rangee in enumerate(rangees):
+        est_entete = index_rangee == 0
+        pdf.set_font("Helvetica", style="B" if est_entete else "", size=9)
+        textes = [_texte_pdf_securise(c) for c in rangee]
+        hauteur_rangee = max(
+            _hauteur_lignes_cellule(pdf, t, largeur_col, hauteur_ligne) for t in textes
+        )
+        if pdf.get_y() + hauteur_rangee > pdf.page_break_trigger:
+            pdf.add_page()
+        x_depart = pdf.l_margin
+        y_depart = pdf.get_y()
+        for i, texte in enumerate(textes):
+            x = x_depart + i * largeur_col
+            if est_entete:
+                pdf.set_fill_color(253, 232, 235)
+                pdf.rect(x, y_depart, largeur_col, hauteur_rangee, style="F")
+            pdf.rect(x, y_depart, largeur_col, hauteur_rangee)
+            pdf.set_xy(x + 1, y_depart + 1)
+            pdf.multi_cell(largeur_col - 2, hauteur_ligne, texte)
+        pdf.set_xy(x_depart, y_depart + hauteur_rangee)
+        pdf.set_font("Helvetica", size=9)
+
+
+def _ecrire_ligne_avec_gras(pdf, texte, taille=11, hauteur=6):
+    """Ecrit une ligne de texte en gerant les **passages en gras** (markdown),
+    et revient a la ligne a la fin."""
+    segments = re.split(r"(\*\*.*?\*\*)", texte)
+    for segment in segments:
+        if not segment:
+            continue
+        if segment.startswith("**") and segment.endswith("**") and len(segment) > 4:
+            pdf.set_font("Helvetica", style="B", size=taille)
+            pdf.write(hauteur, _texte_pdf_securise(segment[2:-2]))
+        else:
+            pdf.set_font("Helvetica", size=taille)
+            pdf.write(hauteur, _texte_pdf_securise(segment))
+    pdf.ln(hauteur)
+
+
+def generer_pdf_document_pedagogique(titre, contenu_markdown):
+    """Genere un PDF proprement mis en forme (titres, gras, tableaux, listes) a
+    partir du texte markdown renvoye par l'IA pour un cours ou un devoir."""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=16)
+    pdf.multi_cell(0, 9, _texte_pdf_securise(titre))
+    pdf.ln(4)
+
+    lignes = (contenu_markdown or "").replace("\r\n", "\n").split("\n")
+    index = 0
+    while index < len(lignes):
+        ligne = lignes[index].strip()
+
+        if not ligne:
+            pdf.ln(3)
+            index += 1
+            continue
+
+        if re.match(r"^-{3,}$", ligne):
+            y = pdf.get_y() + 2
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.ln(6)
+            index += 1
+            continue
+
+        if ligne.startswith("### "):
+            pdf.set_font("Helvetica", style="B", size=12)
+            pdf.multi_cell(0, 7, _texte_pdf_securise(ligne[4:]))
+            pdf.ln(1)
+            index += 1
+            continue
+
+        if ligne.startswith("## "):
+            pdf.set_font("Helvetica", style="B", size=13)
+            pdf.multi_cell(0, 8, _texte_pdf_securise(ligne[3:]))
+            pdf.ln(1)
+            index += 1
+            continue
+
+        if ligne.startswith("# "):
+            pdf.set_font("Helvetica", style="B", size=14)
+            pdf.multi_cell(0, 8, _texte_pdf_securise(ligne[2:]))
+            pdf.ln(1)
+            index += 1
+            continue
+
+        if ligne.startswith("|"):
+            lignes_tableau = []
+            while index < len(lignes) and lignes[index].strip().startswith("|"):
+                lignes_tableau.append(lignes[index].strip())
+                index += 1
+            lignes_utiles = [
+                l for l in lignes_tableau if not re.match(r"^\|[\s\-:\|]+\|$", l)
+            ]
+            rangees = []
+            for l in lignes_utiles:
+                cellules = [c.strip() for c in l.strip("|").split("|")]
+                rangees.append(cellules)
+            if rangees:
+                nb_colonnes_reference = len(rangees[0])
+                rangees = [r for r in rangees if len(r) == nb_colonnes_reference]
+                if rangees:
+                    _dessiner_tableau_pdf(pdf, rangees)
+                    pdf.ln(4)
+            continue
+
+        if ligne.startswith("- ") or ligne.startswith("* "):
+            pdf.set_x(pdf.l_margin + 5)
+            _ecrire_ligne_avec_gras(pdf, "- " + ligne[2:])
+            index += 1
+            continue
+
+        if re.match(r"^\d+\.\s", ligne):
+            pdf.set_x(pdf.l_margin + 5)
+            _ecrire_ligne_avec_gras(pdf, ligne)
+            index += 1
+            continue
+
+        pdf.set_x(pdf.l_margin)
+        _ecrire_ligne_avec_gras(pdf, ligne)
+        index += 1
+
     sortie = pdf.output(dest="S")
     if isinstance(sortie, str):
         sortie = sortie.encode("latin-1")
@@ -2398,7 +2541,7 @@ def ecran_enseignant():
                 if PDF_ACTIF:
                     st.download_button(
                         f"Telecharger le {type_a_generer} en PDF",
-                        data=generer_pdf_texte(f"{profil['matiere']} — {ligne_semaine['theme']}", contenu_document),
+                        data=generer_pdf_document_pedagogique(f"{profil['matiere']} — {ligne_semaine['theme']}", contenu_document),
                         file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.pdf",
                         mime="application/pdf",
                         key=f"telecharger_{type_a_generer}_{ligne_semaine['semaine']}",
