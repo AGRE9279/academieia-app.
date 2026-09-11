@@ -3,3 +3,5 @@ pandas
 supabase
 groq
 fpdf2
+pypdf
+python-docx
