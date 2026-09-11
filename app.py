@@ -11,7 +11,9 @@ les vraies requetes Supabase (table users, table admins) a la place.
 
 import streamlit as st
 import pandas as pd
+import base64
 import hashlib
+import io
 import json
 import re
 import secrets
@@ -909,23 +911,88 @@ def charger_profil_enseignant(user_id):
         return None
 
 
-def enregistrer_profil_enseignant(user_id, matiere, niveau_classe, etablissement, nb_semaines, programme_url=None):
+def enregistrer_profil_enseignant(user_id, matiere, niveau_classe, etablissement, nb_semaines, programme_url=None, programme_texte_extrait=None):
     client = get_client()
-    client.table("teacher_profiles").upsert({
+    donnees = {
         "id": user_id,
         "matiere": matiere,
         "niveau_classe": niveau_classe,
         "etablissement": etablissement,
         "nb_semaines": nb_semaines,
         "programme_officiel_url": programme_url,
-    }).execute()
+    }
+    if programme_texte_extrait is not None:
+        donnees["programme_texte_extrait"] = programme_texte_extrait
+    client.table("teacher_profiles").upsert(donnees).execute()
 
 
-def uploader_programme_pdf(user_id, fichier_pdf):
+def uploader_fichier_programme(user_id, fichier):
+    """Enregistre n'importe quel fichier de programme (PDF, image, Word, texte) dans le stockage."""
     client = get_client()
-    chemin = f"programmes/{user_id}_{fichier_pdf.name}"
-    client.storage.from_("documents").upload(chemin, fichier_pdf.getvalue(), {"upsert": "true"})
+    chemin = f"programmes/{user_id}_{fichier.name}"
+    client.storage.from_("documents").upload(chemin, fichier.getvalue(), {"upsert": "true"})
     return chemin
+
+
+def extraire_texte_programme_photo(fichier_image):
+    """Utilise un modele Groq capable de lire les images pour transcrire le contenu
+    d'une photo du programme officiel (themes, competences, decoupage par periodes)."""
+    client = get_client_groq()
+    image_base64 = base64.b64encode(fichier_image.getvalue()).decode("utf-8")
+    extension = (fichier_image.type or "image/jpeg").split("/")[-1]
+    reponse = client.chat.completions.create(
+        model="llama-3.2-11b-vision-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Cette image montre un programme scolaire officiel (ou un extrait). "
+                            "Transcris fidelement tout le texte lisible : themes, competences, "
+                            "objectifs, decoupage par periodes ou semaines si visible. Reponds "
+                            "uniquement avec le texte transcrit, en francais, sans commentaire "
+                            "ni introduction."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/{extension};base64,{image_base64}"},
+                    },
+                ],
+            }
+        ],
+        max_tokens=2000,
+    )
+    return reponse.choices[0].message.content
+
+
+def extraire_texte_fichier_programme(fichier):
+    """Extrait le texte utile d'un fichier de programme, quel que soit son type :
+    PDF, image (photo), document Word (.docx) ou fichier texte brut (.txt).
+    Retourne None si le type n'est pas reconnu ou si l'extraction echoue."""
+    nom = (fichier.name or "").lower()
+    type_mime = fichier.type or ""
+
+    if nom.endswith(".txt") or type_mime == "text/plain":
+        return fichier.getvalue().decode("utf-8", errors="ignore").strip() or None
+
+    if nom.endswith(".pdf") or type_mime == "application/pdf":
+        from pypdf import PdfReader
+        lecteur = PdfReader(io.BytesIO(fichier.getvalue()))
+        morceaux = [page.extract_text() or "" for page in lecteur.pages]
+        return "\n".join(morceaux).strip() or None
+
+    if nom.endswith(".docx") or "wordprocessingml" in type_mime:
+        from docx import Document
+        document = Document(io.BytesIO(fichier.getvalue()))
+        return "\n".join(p.text for p in document.paragraphs).strip() or None
+
+    if nom.endswith((".jpg", ".jpeg", ".png")) or type_mime.startswith("image/"):
+        return extraire_texte_programme_photo(fichier)
+
+    return None
 
 
 def enregistrer_progression(teacher_id, contenu):
@@ -2583,7 +2650,11 @@ def ecran_enseignant():
                 niveau_classe = st.text_input("Niveau / classe", placeholder="Ex : Terminale MSMA")
                 etablissement = st.text_input("Etablissement (optionnel)")
                 nb_semaines = st.number_input("Nombre de semaines dans l'annee scolaire", min_value=10, max_value=40, value=32)
-                programme_pdf = st.file_uploader("Programme officiel (PDF, optionnel)", type=["pdf"])
+                fichiers_programme = st.file_uploader(
+                    "Programme officiel (optionnel) — PDF, photo, Word ou texte",
+                    type=["pdf", "jpg", "jpeg", "png", "docx", "txt"],
+                    accept_multiple_files=True,
+                )
                 soumis = st.form_submit_button("Enregistrer et generer ma progression")
 
             if soumis:
@@ -2594,10 +2665,30 @@ def ecran_enseignant():
                 else:
                     try:
                         programme_url = None
-                        if programme_pdf is not None:
-                            programme_url = uploader_programme_pdf(utilisateur.get("id"), programme_pdf)
+                        texte_extrait_programme = None
+                        if fichiers_programme:
+                            morceaux_extraits = []
+                            with st.spinner("Lecture du ou des fichiers du programme..."):
+                                for fichier in fichiers_programme:
+                                    try:
+                                        programme_url = uploader_fichier_programme(utilisateur.get("id"), fichier)
+                                    except Exception as erreur_upload:
+                                        st.warning(f"Impossible d'enregistrer {fichier.name} : {erreur_upload}")
+                                        continue
+                                    try:
+                                        texte = extraire_texte_fichier_programme(fichier)
+                                        if texte:
+                                            morceaux_extraits.append(texte)
+                                        else:
+                                            st.warning(f"Le fichier {fichier.name} est enregistre, mais son texte n'a pas pu etre lu.")
+                                    except Exception as erreur_extraction:
+                                        st.warning(f"Le fichier {fichier.name} est enregistre, mais la lecture a echoue : {erreur_extraction}")
+                            if morceaux_extraits:
+                                texte_extrait_programme = "\n\n".join(morceaux_extraits)
+
                         enregistrer_profil_enseignant(
-                            utilisateur.get("id"), matiere, niveau_classe, etablissement, nb_semaines, programme_url
+                            utilisateur.get("id"), matiere, niveau_classe, etablissement, nb_semaines,
+                            programme_url, texte_extrait_programme,
                         )
                         st.session_state.declencher_generation_progression = True
                         st.rerun()
@@ -2614,7 +2705,10 @@ def ecran_enseignant():
                 return
             with st.spinner("Generation de la progression en cours (peut prendre une minute)..."):
                 try:
-                    contenu = generer_progression_ia(profil["matiere"], profil["niveau_classe"], profil["nb_semaines"])
+                    contenu = generer_progression_ia(
+                        profil["matiere"], profil["niveau_classe"], profil["nb_semaines"],
+                        profil.get("programme_texte_extrait"),
+                    )
                     progression = enregistrer_progression(utilisateur.get("id"), contenu)
                     st.session_state.declencher_generation_progression = False
                     st.success("Progression generee !")
