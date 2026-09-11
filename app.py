@@ -821,6 +821,19 @@ def charger_utilisateurs_depuis_supabase():
     return df
 
 
+def compter_demandes_paiement_en_attente():
+    """Compte le nombre de demandes de paiement en attente (tous types confondus :
+    niveaux eleves et abonnements enseignants), pour le badge du tableau de bord admin."""
+    if not SUPABASE_ACTIF:
+        return 0
+    try:
+        client = get_client()
+        reponse = client.table("demandes_paiement").select("id", count="exact").eq("statut", "en_attente").execute()
+        return reponse.count or 0
+    except Exception:
+        return 0
+
+
 def charger_demandes_paiement(statut=None):
     if not SUPABASE_ACTIF:
         return pd.DataFrame()
@@ -2722,9 +2735,19 @@ def entete_avec_deconnexion(titre_role):
         if titre_role in ("admin", "super_admin"):
             couleur_fond = PRIMARY_YELLOW if titre_role == "super_admin" else PRIMARY_YELLOW_LIGHT
             couleur_texte = "#412402" if titre_role == "super_admin" else "#633806"
+            nb_demandes_en_attente = compter_demandes_paiement_en_attente()
+            badge_demandes = ""
+            if nb_demandes_en_attente > 0:
+                pluriel = "s" if nb_demandes_en_attente > 1 else ""
+                badge_demandes = (
+                    f" <span style='display:inline-block;background:#B3261E;color:white;"
+                    f"padding:2px 9px;border-radius:10px;font-size:12px;margin-left:6px;'>"
+                    f"🔔 {nb_demandes_en_attente} nouvelle{pluriel} demande{pluriel}</span>"
+                )
             st.markdown(
                 f"### AcademieIA <span style='display:inline-block;background:{couleur_fond};"
-                f"color:{couleur_texte};padding:2px 10px;border-radius:8px;font-size:12px;'>{titre_role}</span>",
+                f"color:{couleur_texte};padding:2px 10px;border-radius:8px;font-size:12px;'>{titre_role}</span>"
+                f"{badge_demandes}",
                 unsafe_allow_html=True,
             )
         else:
