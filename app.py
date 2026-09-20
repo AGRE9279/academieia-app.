@@ -872,7 +872,7 @@ def charger_utilisateurs_depuis_supabase():
 
 def compter_demandes_paiement_en_attente():
     """Compte le nombre de demandes de paiement en attente (tous types confondus :
-    niveaux eleves et abonnements enseignants), pour le badge du tableau de bord admin."""
+    niveaux eleves et niveaux/semaines enseignants), pour le badge du tableau de bord admin."""
     if not SUPABASE_ACTIF:
         return 0
     try:
@@ -1125,7 +1125,7 @@ def enregistrer_document_genere(teacher_id, progression_id, semaine, type_docume
 
 def compter_documents_generes(teacher_id):
     """Compte le nombre TOTAL de documents generes par cet enseignant, toutes matieres
-    confondues (l'essai gratuit et l'abonnement couvrent le compte entier, pas une matiere)."""
+    confondues."""
     if not SUPABASE_ACTIF or not teacher_id:
         return 0
     try:
@@ -1136,7 +1136,33 @@ def compter_documents_generes(teacher_id):
         return 0
 
 
-def valider_code_abonnement_enseignant(code, teacher_id):
+def charger_semaines_debloquees_enseignant(teacher_id, matiere_id):
+    """Charge la liste des numeros de semaine (niveaux) debloques par paiement pour
+    cette matiere d'un enseignant donne (2000 FCFA/niveau, deblocage sequentiel)."""
+    if not SUPABASE_ACTIF or not teacher_id or not matiere_id:
+        return []
+    try:
+        client = get_client()
+        reponse = client.table("semaines_enseignant_debloquees").select("semaine").eq(
+            "teacher_id", teacher_id
+        ).eq("matiere_id", matiere_id).execute()
+        return [ligne["semaine"] for ligne in reponse.data]
+    except Exception:
+        return []
+
+
+def debloquer_semaine_enseignant(teacher_id, matiere_id, semaine):
+    """Enregistre le deblocage (paiement valide) d'une semaine/niveau pour cette matiere."""
+    client = get_client()
+    client.table("semaines_enseignant_debloquees").upsert({
+        "teacher_id": teacher_id,
+        "matiere_id": matiere_id,
+        "semaine": semaine,
+    }).execute()
+
+
+def valider_code_niveau_enseignant(code, teacher_id, matiere_id, semaine):
+    """Valide un code d'acces pour debloquer UNE semaine/niveau precise (2000 FCFA/niveau)."""
     client = get_client()
     reponse = client.table("codes_acces").select("*").eq("code", code).execute()
     if not reponse.data:
@@ -1144,11 +1170,8 @@ def valider_code_abonnement_enseignant(code, teacher_id):
     ligne = reponse.data[0]
     if ligne.get("utilise"):
         return "deja_utilise"
-    nouvelle_date_expiration = (date.today() + timedelta(days=30)).isoformat()
     client.table("codes_acces").update({"utilise": 1}).eq("code", code).execute()
-    client.table("teacher_profiles").upsert(
-        {"id": teacher_id, "abonnement_actif_jusqu_au": nouvelle_date_expiration}
-    ).execute()
+    debloquer_semaine_enseignant(teacher_id, matiere_id, semaine)
     return "ok"
 
 # ----------------------------------------------------------------------
@@ -1252,7 +1275,7 @@ PROFESSIONS = ["Menuisier aluminium", "Ebeniste", "Autre profession technique"]
 # Niveaux et paiement (mobile money)
 # ----------------------------------------------------------------------
 MONTANT_DEBLOCAGE = "5 000 FCFA"
-MONTANT_ABONNEMENT_ENSEIGNANT = "5 000 FCFA / mois"
+MONTANT_NIVEAU_ENSEIGNANT = "2 000 FCFA"
 
 NIVEAUX_PAR_PROFESSION = {
     "menuiserie_aluminium": [
@@ -2645,18 +2668,20 @@ def ecran_utilisateur():
                                 st.info("Mode demo : la validation de code necessite Supabase configure.")
 
 
-def afficher_paywall_enseignant(teacher_id):
+def afficher_deblocage_niveau_enseignant(teacher_id, matiere_id, numero_semaine, theme_semaine):
+    """Flux de deblocage PAR NIVEAU (= semaine) pour l'espace enseignant : 2000 FCFA/niveau,
+    deblocage sequentiel (impossible de sauter une semaine)."""
     st.markdown(
         f"""<div style='background:{PRIMARY_YELLOW_LIGHT};border-left:4px solid {PRIMARY_YELLOW};
-                    border-radius:8px;padding:14px 16px;margin-bottom:12px;'>
-            <p style='font-size:14px;font-weight:600;margin:0;'>Essai gratuit termine</p>
+                    border-radius:8px;padding:14px 16px;margin-top:12px;margin-bottom:12px;'>
+            <p style='font-size:14px;font-weight:600;margin:0;'>Semaine {numero_semaine} — {theme_semaine or ""}</p>
             <p style='font-size:13px;margin:4px 0 0;color:var(--text-secondary);'>
-                Abonnez-vous pour continuer a generer cours et devoirs sans limite ({MONTANT_ABONNEMENT_ENSEIGNANT}).
+                Debloquez cette semaine pour generer le cours, le devoir et le cahier de texte ({MONTANT_NIVEAU_ENSEIGNANT}).
             </p>
         </div>""",
         unsafe_allow_html=True,
     )
-    with st.expander("Comment s'abonner ?", expanded=True):
+    with st.expander(f"Comment debloquer la Semaine {numero_semaine} ?", expanded=True):
         st.markdown("**1. Effectuez le paiement**")
         cartes_numeros = "".join(
             f"""<div style='background:var(--surface-2);border:0.5px solid var(--border);border-radius:8px;
@@ -2678,13 +2703,18 @@ def afficher_paywall_enseignant(teacher_id):
 
         st.markdown("**3. Suivi de la demande** *(optionnel)*")
         reference = st.text_input(
-            "Reference de transaction", key="reference_paiement_enseignant",
+            "Reference de transaction", key=f"reference_paiement_enseignant_{matiere_id}_{numero_semaine}",
             label_visibility="collapsed", placeholder="Reference de transaction (optionnel)",
         )
-        if st.button("J'ai envoye le paiement", key="btn_soumettre_paiement_enseignant", use_container_width=True):
+        libelle_niveau = f"Semaine {numero_semaine} enseignant"
+        if st.button(
+            "J'ai envoye le paiement",
+            key=f"btn_soumettre_paiement_enseignant_{matiere_id}_{numero_semaine}",
+            use_container_width=True,
+        ):
             if SUPABASE_ACTIF:
                 try:
-                    soumettre_demande_paiement(teacher_id, "Abonnement enseignant", reference)
+                    soumettre_demande_paiement(teacher_id, libelle_niveau, reference)
                     st.success("Demande enregistree. L'administrateur va la traiter et vous envoyer un code.")
                     st.info("Merci de patienter : le traitement peut prendre quelques heures. Vous recevrez le code d'acces par WhatsApp, a saisir ci-dessous.")
                 except Exception as erreur:
@@ -2694,17 +2724,23 @@ def afficher_paywall_enseignant(teacher_id):
 
         st.markdown("**4. Saisissez le code recu**")
         code_saisi = st.text_input(
-            "Code d'acces", key="code_acces_enseignant",
+            "Code d'acces", key=f"code_acces_enseignant_{matiere_id}_{numero_semaine}",
             label_visibility="collapsed", placeholder="Code d'acces",
         )
-        if st.button("Valider le code", key="btn_valider_code_enseignant", use_container_width=True):
+        if st.button(
+            "Valider le code",
+            key=f"btn_valider_code_enseignant_{matiere_id}_{numero_semaine}",
+            use_container_width=True,
+        ):
             if not code_saisi:
                 st.error("Merci de saisir un code.")
             elif SUPABASE_ACTIF:
                 try:
-                    resultat = valider_code_abonnement_enseignant(code_saisi.strip(), teacher_id)
+                    resultat = valider_code_niveau_enseignant(
+                        code_saisi.strip(), teacher_id, matiere_id, numero_semaine
+                    )
                     if resultat == "ok":
-                        st.success("Abonnement active pour 30 jours !")
+                        st.success(f"Semaine {numero_semaine} debloquee !")
                         st.rerun()
                     elif resultat == "deja_utilise":
                         st.error("Ce code a deja ete utilise.")
@@ -2806,8 +2842,6 @@ def ecran_enseignant():
         matiere_active = options_matieres[libelle_choisi]
         st.session_state.matiere_enseignant_active_id = matiere_active["id"]
 
-        profil = charger_profil_enseignant(utilisateur.get("id"))
-
         progression = charger_derniere_progression(matiere_active["id"])
 
         if not progression or st.session_state.get("declencher_generation_progression"):
@@ -2855,20 +2889,16 @@ def ecran_enseignant():
 
         col_cours, col_devoir, col_cahier = st.columns(3)
 
-        nb_documents_deja_generes = compter_documents_generes(utilisateur.get("id"))
-        date_expiration_texte = (profil or {}).get("abonnement_actif_jusqu_au")
-        abonnement_expire = True
-        if date_expiration_texte:
-            try:
-                abonnement_expire = date.fromisoformat(str(date_expiration_texte)) < date.today()
-            except Exception:
-                abonnement_expire = True
-        acces_autorise = (nb_documents_deja_generes == 0) or (not abonnement_expire)
+        numero_semaine = ligne_semaine["semaine"]
+        semaines_debloquees = charger_semaines_debloquees_enseignant(
+            utilisateur.get("id"), matiere_active["id"]
+        )
+        semaine_debloquee = numero_semaine in semaines_debloquees
+        semaine_precedente_ok = numero_semaine == 1 or (numero_semaine - 1) in semaines_debloquees
+        acces_autorise = semaine_debloquee
 
-        if nb_documents_deja_generes == 0:
-            st.caption("Essai gratuit : votre premier document genere est offert.")
-        elif not abonnement_expire:
-            st.caption(f"Abonnement actif jusqu'au {date_expiration_texte}.")
+        if semaine_debloquee:
+            st.caption(f"Semaine {numero_semaine} debloquee — {MONTANT_NIVEAU_ENSEIGNANT} payes.")
 
         with col_cours:
             if st.button("Generer le cours", key="btn_generer_cours", use_container_width=True, disabled=not acces_autorise):
@@ -2880,8 +2910,20 @@ def ecran_enseignant():
             if st.button("Cahier de texte", key="btn_generer_cahier_texte", use_container_width=True, disabled=not acces_autorise):
                 st.session_state["generation_en_cours"] = "cahier_texte"
 
-        if not acces_autorise:
-            afficher_paywall_enseignant(utilisateur.get("id"))
+        if not semaine_debloquee:
+            if semaine_precedente_ok:
+                afficher_deblocage_niveau_enseignant(
+                    utilisateur.get("id"), matiere_active["id"], numero_semaine, ligne_semaine.get("theme")
+                )
+            else:
+                st.markdown(
+                    f"""<div style='background:var(--surface-2, #F1F1EF);border-left:4px solid var(--border, #D9D8D4);
+                                border-radius:8px;padding:12px 14px;margin-top:8px;color:var(--text-secondary, #5f5e5a);
+                                font-size:13px;'>
+                        🔒 Debloquez d'abord la Semaine {numero_semaine - 1} pour pouvoir acceder a la Semaine {numero_semaine}.
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
 
         type_a_generer = st.session_state.get("generation_en_cours")
 
