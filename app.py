@@ -3316,7 +3316,7 @@ def ecran_enseignant():
 
 
 def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
-    col_logo, col_titre, col_actualiser, col_bouton = st.columns([1, 2.7, 0.6, 1])
+    col_logo, col_titre, col_bouton = st.columns([1, 3.3, 1.4])
     with col_logo:
         st.markdown(
             f"""<div style='width:88px;height:88px;border-radius:18px;overflow:hidden;margin-top:4px;'>
@@ -3350,14 +3350,15 @@ def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
                 f"<p style='font-size:13px;color:var(--text-secondary);margin:-6px 0 0;'>Bienvenue, {nom_utilisateur}</p>",
                 unsafe_allow_html=True,
             )
-    with col_actualiser:
-        st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
-        if st.button("🔄", key="btn_actualiser", help="Actualiser l'appli"):
-            st.rerun()
     with col_bouton:
-        if st.button("Deconnexion", key="btn_logout"):
-            st.session_state.utilisateur_connecte = None
-            st.session_state.ecran = "accueil"
+        sous_col_actualiser, sous_col_deconnexion = st.columns([1, 2])
+        with sous_col_actualiser:
+            if st.button("🔄", key="btn_actualiser", help="Actualiser l'appli"):
+                st.rerun()
+        with sous_col_deconnexion:
+            if st.button("Deconnexion", key="btn_logout"):
+                st.session_state.utilisateur_connecte = None
+                st.session_state.ecran = "accueil"
             st.rerun()
 
 
