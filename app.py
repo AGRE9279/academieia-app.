@@ -448,7 +448,10 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
     if type_document == "cours":
         consigne = (
             "Redige un cours structure (objectifs pedagogiques, rappel de notions, deroule "
-            "de la seance, exemples concrets adaptes au metier) pret a etre utilise par un enseignant."
+            "de la seance, exemples concrets adaptes au metier) pret a etre utilise par un enseignant. "
+            "Redige uniquement en texte structure (titres, sous-titres, paragraphes et listes a puces) : "
+            "n'utilise AUCUN tableau markdown (pas de lignes commencant par |), meme pour comparer ou "
+            "resumer des informations."
         )
     else:
         consigne = (
@@ -3149,3 +3152,4 @@ else:
     else:
         entete_avec_deconnexion("utilisateur")
         ecran_utilisateur()
+    
