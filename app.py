@@ -448,10 +448,14 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
     if type_document == "cours":
         consigne = (
             "Redige un cours structure (objectifs pedagogiques, rappel de notions, deroule "
-            "de la seance, exemples concrets adaptes au metier) pret a etre utilise par un enseignant. "
-            "Redige uniquement en texte structure (titres, sous-titres, paragraphes et listes a puces) : "
-            "n'utilise AUCUN tableau markdown (pas de lignes commencant par |), meme pour comparer ou "
-            "resumer des informations."
+            "de la seance minute par minute, exemples concrets adaptes au metier) pret a etre "
+            "utilise par un enseignant. "
+            "IMPORTANT : redige tout le document en texte structure uniquement (titres, sous-titres, "
+            "paragraphes et listes a puces ou numerotees) : n'utilise AUCUN tableau markdown, JAMAIS "
+            "(aucune ligne contenant le caractere |), meme pour le deroule minute par minute, meme pour "
+            "un recapitulatif, meme pour comparer ou resumer des informations. Pour le deroule de "
+            "seance, indique chaque etape sous forme de liste a puces avec la duree entre parentheses "
+            "au debut de chaque puce, par exemple : '- (10 min) Introduction : ...'."
         )
     else:
         consigne = (
@@ -471,7 +475,29 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
         ],
         max_tokens=2000,
     )
-    return reponse.choices[0].message.content
+    contenu = reponse.choices[0].message.content
+    if type_document == "cours":
+        contenu = _convertir_tableaux_en_liste(contenu)
+    return contenu
+
+
+def _convertir_tableaux_en_liste(texte):
+    """Filet de securite : si l'IA a quand meme produit un tableau markdown
+    (lignes '| a | b |'), le convertit en liste a puces plutot que de le
+    laisser tel quel dans le cours."""
+    lignes = (texte or "").split("\n")
+    resultat = []
+    for ligne in lignes:
+        brute = ligne.strip()
+        if brute.startswith("|") and brute.endswith("|"):
+            cellules = [c.strip() for c in brute.strip("|").split("|")]
+            contenu_cellules = "".join(cellules).replace(" ", "").replace("-", "").replace(":", "")
+            if contenu_cellules == "":
+                continue
+            resultat.append("- " + " — ".join(c for c in cellules if c))
+        else:
+            resultat.append(ligne)
+    return "\n".join(resultat)
 
 
 def generer_cahier_texte_ia(matiere, niveau_classe, theme_semaine, objectifs):
@@ -3152,4 +3178,3 @@ else:
     else:
         entete_avec_deconnexion("utilisateur")
         ecran_utilisateur()
-    
