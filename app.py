@@ -3297,8 +3297,15 @@ def ecran_enseignant():
                     )
 
 
-def entete_avec_deconnexion(titre_role):
-    col_titre, col_bouton = st.columns([4, 1])
+def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
+    col_logo, col_titre, col_bouton = st.columns([0.6, 3.4, 1])
+    with col_logo:
+        st.markdown(
+            f"""<div style='width:44px;height:44px;border-radius:10px;overflow:hidden;margin-top:4px;'>
+                <img src='{LOGO_DATA_URI}' style='width:100%;height:100%;object-fit:cover;' />
+            </div>""",
+            unsafe_allow_html=True,
+        )
     with col_titre:
         if titre_role in ("admin", "super_admin"):
             couleur_fond = PRIMARY_YELLOW if titre_role == "super_admin" else PRIMARY_YELLOW_LIGHT
@@ -3320,6 +3327,11 @@ def entete_avec_deconnexion(titre_role):
             )
         else:
             st.markdown(f"### AcademieIA <span class='badge'>{titre_role}</span>", unsafe_allow_html=True)
+        if nom_utilisateur:
+            st.markdown(
+                f"<p style='font-size:13px;color:var(--text-secondary);margin:-6px 0 0;'>{nom_utilisateur}</p>",
+                unsafe_allow_html=True,
+            )
     with col_bouton:
         if st.button("Deconnexion", key="btn_logout"):
             st.session_state.utilisateur_connecte = None
@@ -3339,14 +3351,14 @@ else:
     nom = st.session_state.utilisateur_connecte["nom"]
 
     if role == "super_admin":
-        entete_avec_deconnexion("super_admin")
+        entete_avec_deconnexion("super_admin", nom)
         ecran_super_admin()
     elif role == "admin":
-        entete_avec_deconnexion("admin")
+        entete_avec_deconnexion("admin", nom)
         ecran_admin()
     elif role == "enseignant":
-        entete_avec_deconnexion("enseignant")
+        entete_avec_deconnexion("enseignant", nom)
         ecran_enseignant()
     else:
-        entete_avec_deconnexion("utilisateur")
+        entete_avec_deconnexion("utilisateur", nom)
         ecran_utilisateur()
