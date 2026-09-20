@@ -1191,7 +1191,7 @@ st.markdown(
         background: #FFFFFF;
     }}
     [class*="st-key-fond_accueil"] {{
-        background: linear-gradient(135deg, #E0FBF8 0%, {PRIMARY_YELLOW_LIGHT} 100%);
+        background: #FFFFFF;
         border-radius: 12px;
         padding: 1.5rem;
     }}
@@ -1582,7 +1582,10 @@ if "utilisateur_connecte" not in st.session_state:
     st.session_state.utilisateur_connecte = None
 
 if "ecran" not in st.session_state:
-    st.session_state.ecran = "accueil"
+    st.session_state.ecran = "onboarding"
+
+if "onboarding_index" not in st.session_state:
+    st.session_state.onboarding_index = 0
 
 if "onglet_auth_par_defaut" not in st.session_state:
     st.session_state.onglet_auth_par_defaut = "Connexion"
@@ -1592,6 +1595,71 @@ if "niveau2_prompt_choisi" not in st.session_state:
 
 if "niveau4_prompt_choisi" not in st.session_state:
     st.session_state.niveau4_prompt_choisi = None
+
+ONBOARDING_SLIDES = [
+    {
+        "emoji": "🤖",
+        "titre": "Bienvenue sur AcademieIA",
+        "description": "Votre assistant pense pour chaque metier : menuisier, ebeniste, enseignant ou tout autre professionnel, chacun son parcours adapte.",
+    },
+    {
+        "emoji": "🎓",
+        "titre": "Apprenez a votre rythme",
+        "description": "Niveaux progressifs, quiz de validation et certificat a la cle. Vous avancez pas a pas, sans jamais etre perdu.",
+    },
+]
+
+
+def ecran_onboarding():
+    col_gauche, col_centre, col_droite = st.columns([1, 3, 1])
+    with col_centre, st.container(key="fond_accueil"):
+        index = st.session_state.onboarding_index
+        total = len(ONBOARDING_SLIDES)
+        slide = ONBOARDING_SLIDES[index]
+
+        col_compteur, col_espace, col_passer = st.columns([1, 2, 1])
+        with col_compteur:
+            st.markdown(
+                f"<p style='font-size:13px;color:var(--text-secondary);margin-top:8px;'>{index + 1}/{total}</p>",
+                unsafe_allow_html=True,
+            )
+        with col_passer:
+            if st.button("Passer", key="btn_onboarding_passer", use_container_width=True):
+                st.session_state.ecran = "accueil"
+                st.rerun()
+
+        st.markdown(
+            f"""
+            <div style='text-align:center; padding: 1.5rem 0 1rem;'>
+                <div style='width:120px;height:120px;border-radius:24px;background:{PRIMARY_YELLOW_LIGHT};
+                            display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:56px;'>
+                    {slide['emoji']}
+                </div>
+                <p style='font-size:22px;font-weight:700;color:{PRIMARY_BLUE};margin:0 0 10px;'>{slide['titre']}</p>
+                <p style='font-size:14px;color:var(--text-secondary);margin:0 0 1.5rem;line-height:1.5;'>
+                    {slide['description']}
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        points = "".join(
+            f"<span style='display:inline-block;width:{'20px' if i == index else '8px'};height:8px;"
+            f"border-radius:4px;margin:0 3px;background:{PRIMARY_BLUE if i == index else '#D9D8D4'};'></span>"
+            for i in range(total)
+        )
+        st.markdown(f"<div style='text-align:center;margin-bottom:1.25rem;'>{points}</div>", unsafe_allow_html=True)
+
+        with st.container(key="bouton_jaune_onboarding"):
+            libelle_bouton = "Commencer →" if index == total - 1 else "Suivant →"
+            if st.button(libelle_bouton, key="btn_onboarding_suivant", use_container_width=True):
+                if index == total - 1:
+                    st.session_state.ecran = "accueil"
+                else:
+                    st.session_state.onboarding_index = index + 1
+                st.rerun()
+
 
 def ecran_accueil():
     col_gauche, col_centre, col_droite = st.columns([1, 2, 1])
@@ -3059,7 +3127,9 @@ def entete_avec_deconnexion(titre_role):
 
 
 if st.session_state.utilisateur_connecte is None:
-    if st.session_state.ecran == "accueil":
+    if st.session_state.ecran == "onboarding":
+        ecran_onboarding()
+    elif st.session_state.ecran == "accueil":
         ecran_accueil()
     else:
         ecran_authentification()
