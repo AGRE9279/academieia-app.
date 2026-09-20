@@ -37,6 +37,15 @@ except ImportError:
 
 PDF_ACTIF = FPDF is not None
 
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
+SCHEMAS_ACTIF = plt is not None
+
 
 def _texte_pdf_securise(texte):
     """Le moteur PDF (police standard) ne gere que le latin-1 : on retire
@@ -235,7 +244,112 @@ def _ecrire_ligne_avec_gras(pdf, texte, taille=11, hauteur=6):
     pdf.ln(hauteur)
 
 
-def generer_pdf_document_pedagogique(titre, contenu_markdown):
+def _dessiner_symbole(ax, x, y, type_symbole, label):
+    """Dessine un symbole electrique simplifie (approximation pedagogique,
+    pas la norme graphique exacte) a la position (x, y) d'un axe matplotlib."""
+    if type_symbole in ("lampe",):
+        cercle = plt.Circle((x, y), 0.28, fill=False, linewidth=1.6, color="black")
+        ax.add_patch(cercle)
+        ax.plot([x - 0.2, x + 0.2], [y - 0.2, y + 0.2], color="black", linewidth=1.2)
+        ax.plot([x - 0.2, x + 0.2], [y + 0.2, y - 0.2], color="black", linewidth=1.2)
+    elif type_symbole in ("interrupteur", "va_et_vient", "telerupteur_commande"):
+        ax.plot([x - 0.3, x - 0.08], [y, y], color="black", linewidth=1.6)
+        ax.plot([x + 0.08, x + 0.3], [y, y], color="black", linewidth=1.6)
+        ax.plot([x - 0.08, x + 0.22], [y, y + 0.22], color="black", linewidth=1.6)
+        ax.plot([x - 0.08, x + 0.08], [y, y], marker="o", markersize=3, color="black")
+    elif type_symbole in ("prise",):
+        cercle = plt.Circle((x, y), 0.28, fill=False, linewidth=1.6, color="black")
+        ax.add_patch(cercle)
+        ax.plot([x - 0.08, x - 0.08], [y - 0.12, y + 0.12], color="black", linewidth=1.4)
+        ax.plot([x + 0.08, x + 0.08], [y - 0.12, y + 0.12], color="black", linewidth=1.4)
+    elif type_symbole in ("disjoncteur", "compteur", "tableau", "telerupteur", "boite"):
+        largeur = 0.9 if type_symbole == "tableau" else 0.6
+        rect = plt.Rectangle((x - largeur / 2, y - 0.3), largeur, 0.6, fill=False, linewidth=1.6, color="black")
+        ax.add_patch(rect)
+    else:
+        cercle = plt.Circle((x, y), 0.08, fill=True, color="black")
+        ax.add_patch(cercle)
+    ax.text(x, y - 0.55, label, ha="center", va="top", fontsize=9)
+
+
+def rendu_schema_png(schema):
+    """Dessine un schema (elements + connexions) et retourne l'image PNG en bytes.
+    Layout simple : les elements sont disposes sur une seule ligne horizontale,
+    relies par des traits droits selon les connexions fournies."""
+    elements = schema.get("elements", [])
+    connexions = schema.get("connexions", [])
+    if not elements:
+        return None
+
+    positions = {el["id"]: (index * 1.6, 0) for index, el in enumerate(elements)}
+
+    fig, ax = plt.subplots(figsize=(max(4, len(elements) * 1.6), 2.6))
+    for id_a, id_b in connexions:
+        if id_a in positions and id_b in positions:
+            xa, ya = positions[id_a]
+            xb, yb = positions[id_b]
+            ax.plot([xa, xb], [ya, yb], color="black", linewidth=1.4, zorder=1)
+
+    for el in elements:
+        x, y = positions[el["id"]]
+        _dessiner_symbole(ax, x, y, el.get("type", "generique"), el.get("label", ""))
+
+    ax.set_xlim(-1, max(1.6 * len(elements), 2))
+    ax.set_ylim(-1.3, 1.3)
+    ax.axis("off")
+    ax.set_aspect("equal")
+    tampon = io.BytesIO()
+    fig.savefig(tampon, format="png", dpi=160, bbox_inches="tight", transparent=False, facecolor="white")
+    plt.close(fig)
+    tampon.seek(0)
+    return tampon.read()
+
+
+def generer_schemas_cours(matiere, theme_semaine, objectifs):
+    """Demande a Groq une description structuree (JSON) de 1 a 2 schemas
+    pertinents pour ce cours, a partir d'un vocabulaire de symboles limite
+    (lampe, interrupteur, va_et_vient, prise, disjoncteur, compteur, tableau,
+    telerupteur, boite, noeud, generique), puis les dessine."""
+    client = get_client_groq()
+    prompt_systeme = (
+        f"Tu proposes des schemas techniques simples pour illustrer un cours. "
+        f"Matiere : {matiere}. Theme : {theme_semaine}. Objectifs : {objectifs}. "
+        f"Propose 1 a 2 schemas pertinents (par exemple un schema de circuit electrique simple "
+        f"si le theme s'y prete). Chaque schema est une suite d'elements relies entre eux. "
+        f"Reponds UNIQUEMENT avec un JSON valide, sans texte autour, au format exact :\n"
+        f'{{"schemas": [{{"titre": "...", "elements": '
+        f'[{{"id": "A", "type": "...", "label": "..."}}, ...], '
+        f'"connexions": [["A", "B"], ["B", "C"]]}}]}}\n'
+        f"Le champ 'type' de chaque element doit etre choisi UNIQUEMENT parmi : lampe, "
+        f"interrupteur, va_et_vient, prise, disjoncteur, compteur, tableau, telerupteur, boite, "
+        f"noeud, generique. Si aucun schema electrique/technique n'est pertinent pour ce theme, "
+        f"reponds avec {{\"schemas\": []}}. Reponds en francais pour les titres et labels."
+    )
+    reponse = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": prompt_systeme},
+            {"role": "user", "content": "Propose les schemas."},
+        ],
+        max_tokens=800,
+    )
+    texte = reponse.choices[0].message.content.strip()
+    texte = texte.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    donnees = json.loads(texte, strict=False)
+    schemas = donnees.get("schemas", [])[:2]
+
+    resultats = []
+    for schema in schemas:
+        try:
+            image_png = rendu_schema_png(schema)
+            if image_png:
+                resultats.append({"titre": schema.get("titre", "Schema"), "image": image_png})
+        except Exception:
+            continue
+    return resultats
+
+
+def generer_pdf_document_pedagogique(titre, contenu_markdown, schemas=None):
     """Genere un PDF proprement mis en forme (titres, gras, tableaux, listes) a
     partir du texte markdown renvoye par l'IA pour un cours ou un devoir."""
     pdf = FPDF()
@@ -318,6 +432,18 @@ def generer_pdf_document_pedagogique(titre, contenu_markdown):
         pdf.set_x(pdf.l_margin)
         _ecrire_ligne_avec_gras(pdf, ligne)
         index += 1
+
+    if schemas:
+        for schema in schemas:
+            pdf.add_page()
+            pdf.set_font("Helvetica", style="B", size=13)
+            pdf.multi_cell(0, 8, _texte_pdf_securise(schema.get("titre", "Schema")))
+            pdf.ln(4)
+            try:
+                pdf.image(io.BytesIO(schema["image"]), x=pdf.l_margin, w=pdf.w - pdf.l_margin - pdf.r_margin)
+            except Exception:
+                pdf.set_font("Helvetica", size=10)
+                pdf.multi_cell(0, 6, _texte_pdf_securise("(schema non disponible)"))
 
     sortie = pdf.output(dest="S")
     if isinstance(sortie, str):
@@ -2996,11 +3122,13 @@ def ecran_enseignant():
         semaines_debloquees = charger_semaines_debloquees_enseignant(
             utilisateur.get("id"), matiere_active["id"]
         )
-        semaine_debloquee = numero_semaine in semaines_debloquees
+        semaine_debloquee = numero_semaine == 1 or numero_semaine in semaines_debloquees
         semaine_precedente_ok = numero_semaine == 1 or (numero_semaine - 1) in semaines_debloquees
         acces_autorise = semaine_debloquee
 
-        if semaine_debloquee:
+        if numero_semaine == 1:
+            st.caption("Semaine 1 offerte — essai gratuit.")
+        elif semaine_debloquee:
             st.caption(f"Semaine {numero_semaine} debloquee — {MONTANT_NIVEAU_ENSEIGNANT} payes.")
 
         with col_cours:
@@ -3121,10 +3249,26 @@ def ecran_enseignant():
                     bloc_style + bloc_ouverture + contenu_document + "</div>",
                     unsafe_allow_html=True,
                 )
+
+                schemas_cours = []
+                if type_a_generer == "cours" and SCHEMAS_ACTIF and GROQ_ACTIF:
+                    with st.spinner("Generation des schemas..."):
+                        try:
+                            schemas_cours = generer_schemas_cours(
+                                matiere_active["matiere"], ligne_semaine["theme"], ligne_semaine["objectifs"]
+                            )
+                        except Exception:
+                            schemas_cours = []
+                    for schema in schemas_cours:
+                        st.image(schema["image"], caption=schema["titre"], use_container_width=True)
+
                 if PDF_ACTIF:
                     st.download_button(
                         f"Telecharger le {type_a_generer} en PDF",
-                        data=generer_pdf_document_pedagogique(f"{matiere_active['matiere']} — {ligne_semaine['theme']}", contenu_document),
+                        data=generer_pdf_document_pedagogique(
+                            f"{matiere_active['matiere']} — {ligne_semaine['theme']}", contenu_document,
+                            schemas=schemas_cours,
+                        ),
                         file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.pdf",
                         mime="application/pdf",
                         key=f"telecharger_{type_a_generer}_{ligne_semaine['semaine']}",
