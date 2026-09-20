@@ -3347,7 +3347,7 @@ def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
             st.markdown(f"### AcademieIA <span class='badge'>{titre_role}</span>", unsafe_allow_html=True)
         if nom_utilisateur:
             st.markdown(
-                f"<p style='font-size:13px;color:var(--text-secondary);margin:-6px 0 0;'>{nom_utilisateur}</p>",
+                f"<p style='font-size:13px;color:var(--text-secondary);margin:-6px 0 0;'>Bienvenue, {nom_utilisateur}</p>",
                 unsafe_allow_html=True,
             )
     with col_actualiser:
