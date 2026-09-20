@@ -455,7 +455,13 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
             "(aucune ligne contenant le caractere |), meme pour le deroule minute par minute, meme pour "
             "un recapitulatif, meme pour comparer ou resumer des informations. Pour le deroule de "
             "seance, indique chaque etape sous forme de liste a puces avec la duree entre parentheses "
-            "au debut de chaque puce, par exemple : '- (10 min) Introduction : ...'."
+            "au debut de chaque puce, par exemple : '- (10 min) Introduction : ...'. "
+            "DEVELOPPEMENT : chaque partie doit etre approfondie et complete, pas juste des listes de "
+            "puces courtes. Pour le rappel de notions et les exemples concrets en particulier, redige "
+            "de veritables paragraphes explicatifs (3 a 5 phrases minimum chacun) qui expliquent le "
+            "'pourquoi' et le 'comment', avec du vocabulaire technique precis, avant d'ajouter des "
+            "listes si besoin. Le cours doit etre suffisamment complet pour qu'un enseignant puisse le "
+            "donner tel quel sans avoir a improviser des explications manquantes."
         )
     else:
         consigne = (
@@ -473,7 +479,7 @@ def generer_document_cours_devoir(type_document, matiere, niveau_classe, theme_s
             {"role": "system", "content": prompt_systeme},
             {"role": "user", "content": f"Genere le {type_document}."},
         ],
-        max_tokens=2000,
+        max_tokens=3500,
     )
     contenu = reponse.choices[0].message.content
     if type_document == "cours":
