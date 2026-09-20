@@ -113,11 +113,22 @@ def _ecrire_tableau_pdf(pdf, lignes_tableau):
         pdf.set_xy(x_debut, y_debut + hauteur_ligne)
 
 
+def _ajouter_logo_pdf(pdf, taille=16):
+    """Insere le logo AcademieIA en haut a gauche de la page courante,
+    et deplace le curseur en dessous pour la suite du contenu."""
+    try:
+        pdf.image(io.BytesIO(base64.b64decode(LOGO_BASE64)), x=pdf.l_margin, y=8, w=taille)
+        pdf.set_xy(pdf.l_margin, 8 + taille + 4)
+    except Exception:
+        pass
+
+
 def generer_pdf_texte(titre, corps):
     """Genere un PDF (titre + corps) en interpretant une mise en forme markdown simple :
     titres (#, ##, ###), gras (**texte**), listes a puces (- item) et tableaux (| a | b |)."""
     pdf = FPDF()
     pdf.add_page()
+    _ajouter_logo_pdf(pdf)
     pdf.set_font("Helvetica", style="B", size=14)
     pdf.multi_cell(0, 10, _texte_pdf_securise(titre))
     pdf.ln(4)
@@ -177,6 +188,11 @@ def generer_pdf_certificat(nom_utilisateur, profession):
     """Genere le certificat PDF de fin de parcours (Niveau 4 termine)."""
     pdf = FPDF()
     pdf.add_page()
+    try:
+        taille_logo = 22
+        pdf.image(io.BytesIO(base64.b64decode(LOGO_BASE64)), x=(pdf.w - taille_logo) / 2, y=14, w=taille_logo)
+    except Exception:
+        pass
     pdf.set_font("Helvetica", style="B", size=22)
     pdf.ln(20)
     pdf.multi_cell(0, 14, _texte_pdf_securise("Certificat de Maitrise AcademieIA"), align="C")
@@ -363,6 +379,7 @@ def generer_pdf_document_pedagogique(titre, contenu_markdown, schemas=None):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    _ajouter_logo_pdf(pdf)
     pdf.set_font("Helvetica", style="B", size=16)
     pdf.multi_cell(0, 9, _texte_pdf_securise(titre))
     pdf.ln(4)
@@ -466,6 +483,7 @@ def generer_pdf_cahier_texte(titre, date_texte, prochain_cours_texte, contenu_pl
     pdf = FPDF(orientation="L")
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    _ajouter_logo_pdf(pdf, taille=13)
     pdf.set_font("Helvetica", style="B", size=14)
     pdf.multi_cell(0, 8, _texte_pdf_securise(titre))
     pdf.ln(4)
@@ -3298,10 +3316,10 @@ def ecran_enseignant():
 
 
 def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
-    col_logo, col_titre, col_bouton = st.columns([0.6, 3.4, 1])
+    col_logo, col_titre, col_bouton = st.columns([1, 3, 1])
     with col_logo:
         st.markdown(
-            f"""<div style='width:44px;height:44px;border-radius:10px;overflow:hidden;margin-top:4px;'>
+            f"""<div style='width:88px;height:88px;border-radius:18px;overflow:hidden;margin-top:4px;'>
                 <img src='{LOGO_DATA_URI}' style='width:100%;height:100%;object-fit:cover;' />
             </div>""",
             unsafe_allow_html=True,
