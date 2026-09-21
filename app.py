@@ -3370,7 +3370,7 @@ def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
             if st.button("Deconnexion", key="btn_logout"):
                 st.session_state.utilisateur_connecte = None
                 st.session_state.ecran = "accueil"
-            st.rerun()
+                st.rerun()
 
 
 if st.session_state.utilisateur_connecte is None:
