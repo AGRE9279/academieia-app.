@@ -505,7 +505,9 @@ GROQ_ACTIF = Groq is not None and "GROQ_API_KEY" in st.secrets
 
 @st.cache_resource
 def get_client_groq():
-    return Groq(api_key=st.secrets["GROQ_API_KEY"])
+    """Cree le client Groq avec un timeout de 25s, pour eviter que l'appli
+    reste bloquee indefiniment si l'API met anormalement longtemps a repondre."""
+    return Groq(api_key=st.secrets["GROQ_API_KEY"], timeout=25.0)
 
 
 def repondre_assistant_ia(question, profession, niveaux_debloques):
