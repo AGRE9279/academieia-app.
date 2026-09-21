@@ -39,14 +39,12 @@ except ImportError:
 
 PDF_ACTIF = FPDF is not None
 
-try:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-except ImportError:
-    plt = None
-
-SCHEMAS_ACTIF = plt is not None
+# Fonctionnalite des schemas dessines desactivee temporairement : matplotlib
+# est gourmand en memoire et semble faire depasser la limite du plan gratuit
+# Streamlit Cloud, causant des blocages. A reactiver plus tard si besoin en
+# remettant SCHEMAS_ACTIF = plt is not None.
+plt = None
+SCHEMAS_ACTIF = False
 
 try:
     from PIL import Image
