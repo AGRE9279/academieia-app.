@@ -22,8 +22,10 @@ from datetime import date, datetime, timedelta
 
 try:
     from supabase import create_client
+    from supabase.client import ClientOptions
 except ImportError:
     create_client = None
+    ClientOptions = None
 
 try:
     from groq import Groq
@@ -691,6 +693,15 @@ SUPABASE_ACTIF = create_client is not None and "SUPABASE_URL" in st.secrets and 
 
 @st.cache_resource
 def get_client():
+    """Cree le client Supabase avec un timeout de 15s sur les appels reseau,
+    pour eviter que l'appli reste bloquee indefiniment (ex: base de donnees
+    qui vient de se reveiller apres une pause et met du temps a repondre)."""
+    if ClientOptions is not None:
+        try:
+            options = ClientOptions(postgrest_client_timeout=15, storage_client_timeout=15)
+            return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"], options=options)
+        except Exception:
+            pass
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
 
