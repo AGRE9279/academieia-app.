@@ -33,6 +33,17 @@ except ImportError:
     Groq = None
 
 try:
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
+except ImportError:
+    DocxDocument = None
+
+DOCX_ACTIF = DocxDocument is not None
+
+try:
     from fpdf import FPDF
 except ImportError:
     FPDF = None
@@ -496,6 +507,163 @@ def generer_pdf_cahier_texte(titre, date_texte, prochain_cours_texte, contenu_pl
     if isinstance(sortie, str):
         sortie = sortie.encode("latin-1")
     return bytes(sortie)
+
+
+# ----------------------------------------------------------------------
+# Generation Word (.docx) — memes contenus que les fonctions PDF ci-dessus,
+# pour laisser a l'enseignant le choix du format telecharge.
+# ----------------------------------------------------------------------
+def _ajouter_segments_gras_docx(paragraphe, texte, taille=11):
+    """Ajoute a un paragraphe Word les segments de texte, en respectant
+    les portions **en gras** (meme convention que pour le PDF)."""
+    for morceau, est_gras in _segments_gras(texte):
+        run = paragraphe.add_run(morceau)
+        run.bold = est_gras
+        run.font.size = Pt(taille)
+
+
+def _ajouter_tableau_docx(doc, lignes_tableau):
+    """Ajoute un tableau Word (liste de listes de cellules), premiere ligne en en-tete."""
+    if not lignes_tableau:
+        return
+    nb_colonnes = max(len(ligne) for ligne in lignes_tableau)
+    tableau = doc.add_table(rows=0, cols=nb_colonnes)
+    tableau.style = "Table Grid"
+    tableau.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for index_ligne, ligne in enumerate(lignes_tableau):
+        ligne = ligne + [""] * (nb_colonnes - len(ligne))
+        rangee = tableau.add_row()
+        for indice_colonne, cellule in enumerate(ligne):
+            cellule_word = rangee.cells[indice_colonne]
+            cellule_word.text = ""
+            p = cellule_word.paragraphs[0]
+            run = p.add_run(cellule or "")
+            run.bold = index_ligne == 0
+            run.font.size = Pt(10)
+
+
+def _ajouter_logo_docx(doc):
+    """Insere le logo AcademieIA en haut du document Word."""
+    try:
+        image_bytes = base64.b64decode(LOGO_BASE64)
+        paragraphe = doc.add_paragraph()
+        run = paragraphe.add_run()
+        run.add_picture(io.BytesIO(image_bytes), width=Inches(0.7))
+    except Exception:
+        pass
+
+
+def generer_docx_document_pedagogique(titre, contenu_markdown, schemas=None):
+    """Genere un document Word (.docx) proprement mis en forme (titres, gras,
+    tableaux, listes) a partir du meme texte que la version PDF."""
+    doc = DocxDocument()
+    _ajouter_logo_docx(doc)
+    titre_paragraphe = doc.add_heading(level=0)
+    titre_paragraphe.add_run(titre or "")
+
+    lignes = (contenu_markdown or "").replace("\r\n", "\n").split("\n")
+    index = 0
+    while index < len(lignes):
+        ligne = lignes[index].strip()
+
+        if not ligne:
+            index += 1
+            continue
+
+        if re.match(r"^-{3,}$", ligne):
+            doc.add_paragraph("_" * 40)
+            index += 1
+            continue
+
+        if ligne.startswith("### "):
+            doc.add_heading(ligne[4:], level=3)
+            index += 1
+            continue
+
+        if ligne.startswith("## "):
+            doc.add_heading(ligne[3:], level=2)
+            index += 1
+            continue
+
+        if ligne.startswith("# "):
+            doc.add_heading(ligne[2:], level=1)
+            index += 1
+            continue
+
+        if ligne.startswith("|"):
+            lignes_tableau = []
+            while index < len(lignes) and lignes[index].strip().startswith("|"):
+                lignes_tableau.append(lignes[index].strip())
+                index += 1
+            lignes_utiles = [
+                l for l in lignes_tableau if not re.match(r"^\|[\s\-:\|]+\|$", l)
+            ]
+            rangees = []
+            for l in lignes_utiles:
+                cellules = [c.strip() for c in l.strip("|").split("|")]
+                rangees.append(cellules)
+            if rangees:
+                nb_colonnes_reference = len(rangees[0])
+                rangees = [r for r in rangees if len(r) == nb_colonnes_reference]
+                if rangees:
+                    _ajouter_tableau_docx(doc, rangees)
+            continue
+
+        if ligne.startswith("- ") or ligne.startswith("* "):
+            paragraphe = doc.add_paragraph(style="List Bullet")
+            _ajouter_segments_gras_docx(paragraphe, ligne[2:])
+            index += 1
+            continue
+
+        if re.match(r"^\d+\.\s", ligne):
+            paragraphe = doc.add_paragraph(style="List Number")
+            _ajouter_segments_gras_docx(paragraphe, re.sub(r"^\d+\.\s", "", ligne))
+            index += 1
+            continue
+
+        paragraphe = doc.add_paragraph()
+        _ajouter_segments_gras_docx(paragraphe, ligne)
+        index += 1
+
+    if schemas:
+        for schema in schemas:
+            doc.add_page_break()
+            doc.add_heading(schema.get("titre", "Schema"), level=2)
+            try:
+                doc.add_picture(io.BytesIO(schema["image"]), width=Inches(6))
+            except Exception:
+                doc.add_paragraph("(schema non disponible)")
+
+    tampon = io.BytesIO()
+    doc.save(tampon)
+    return tampon.getvalue()
+
+
+def generer_docx_cahier_texte(titre, date_texte, prochain_cours_texte, contenu_plan):
+    """Genere le cahier de texte au format Word : meme tableau 4 colonnes
+    (Date, Prochain cours, Plan du Cours, Emargement) que la version PDF,
+    en orientation paysage pour laisser assez de place au plan."""
+    doc = DocxDocument()
+    section = doc.sections[0]
+    section.orientation = 1  # WD_ORIENT.LANDSCAPE
+    nouvelle_largeur, nouvelle_hauteur = section.page_height, section.page_width
+    section.page_width = nouvelle_largeur
+    section.page_height = nouvelle_hauteur
+
+    _ajouter_logo_docx(doc)
+    titre_paragraphe = doc.add_heading(level=1)
+    titre_paragraphe.add_run(titre or "")
+
+    rangees = [
+        ["Date", "Prochain cours", "Plan du Cours — Textes, Devoirs, Exercices", "Emargement"],
+        [date_texte or "", prochain_cours_texte or "", contenu_plan or "", ""],
+    ]
+    _ajouter_tableau_docx(doc, rangees)
+
+    tampon = io.BytesIO()
+    doc.save(tampon)
+    return tampon.getvalue()
+
 
 # ----------------------------------------------------------------------
 # Connexion Groq (assistant IA)
@@ -3269,17 +3437,32 @@ def ecran_enseignant():
                     f"</table>"
                 )
                 st.markdown(tableau_html, unsafe_allow_html=True)
-                if PDF_ACTIF:
-                    st.download_button(
-                        "Telecharger le cahier de texte en PDF",
-                        data=generer_pdf_cahier_texte(
-                            f"{matiere_active['matiere']} — {ligne_semaine['theme']}",
-                            date_texte, prochain_cours, contenu_document,
-                        ),
-                        file_name=f"cahier_texte_semaine{ligne_semaine['semaine']}.pdf",
-                        mime="application/pdf",
-                        key=f"telecharger_cahier_texte_{ligne_semaine['semaine']}",
-                    )
+                col_telecharger_pdf, col_telecharger_docx = st.columns(2)
+                titre_document_cahier = f"{matiere_active['matiere']} — {ligne_semaine['theme']}"
+                with col_telecharger_pdf:
+                    if PDF_ACTIF:
+                        st.download_button(
+                            "📄 Telecharger en PDF",
+                            data=generer_pdf_cahier_texte(
+                                titre_document_cahier, date_texte, prochain_cours, contenu_document,
+                            ),
+                            file_name=f"cahier_texte_semaine{ligne_semaine['semaine']}.pdf",
+                            mime="application/pdf",
+                            key=f"telecharger_cahier_texte_pdf_{ligne_semaine['semaine']}",
+                            use_container_width=True,
+                        )
+                with col_telecharger_docx:
+                    if DOCX_ACTIF:
+                        st.download_button(
+                            "📝 Telecharger en Word",
+                            data=generer_docx_cahier_texte(
+                                titre_document_cahier, date_texte, prochain_cours, contenu_document,
+                            ),
+                            file_name=f"cahier_texte_semaine{ligne_semaine['semaine']}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"telecharger_cahier_texte_docx_{ligne_semaine['semaine']}",
+                            use_container_width=True,
+                        )
             elif contenu_document:
                 bloc_style = (
                     "<style>"
@@ -3313,17 +3496,32 @@ def ecran_enseignant():
                     for schema in schemas_cours:
                         st.image(schema["image"], caption=schema["titre"], use_container_width=True)
 
-                if PDF_ACTIF:
-                    st.download_button(
-                        f"Telecharger le {type_a_generer} en PDF",
-                        data=generer_pdf_document_pedagogique(
-                            f"{matiere_active['matiere']} — {ligne_semaine['theme']}", contenu_document,
-                            schemas=schemas_cours,
-                        ),
-                        file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.pdf",
-                        mime="application/pdf",
-                        key=f"telecharger_{type_a_generer}_{ligne_semaine['semaine']}",
-                    )
+                titre_document_cours = f"{matiere_active['matiere']} — {ligne_semaine['theme']}"
+                col_telecharger_pdf, col_telecharger_docx = st.columns(2)
+                with col_telecharger_pdf:
+                    if PDF_ACTIF:
+                        st.download_button(
+                            f"📄 Telecharger en PDF",
+                            data=generer_pdf_document_pedagogique(
+                                titre_document_cours, contenu_document, schemas=schemas_cours,
+                            ),
+                            file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.pdf",
+                            mime="application/pdf",
+                            key=f"telecharger_{type_a_generer}_pdf_{ligne_semaine['semaine']}",
+                            use_container_width=True,
+                        )
+                with col_telecharger_docx:
+                    if DOCX_ACTIF:
+                        st.download_button(
+                            f"📝 Telecharger en Word",
+                            data=generer_docx_document_pedagogique(
+                                titre_document_cours, contenu_document, schemas=schemas_cours,
+                            ),
+                            file_name=f"{type_a_generer}_semaine{ligne_semaine['semaine']}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"telecharger_{type_a_generer}_docx_{ligne_semaine['semaine']}",
+                            use_container_width=True,
+                        )
 
 
 def entete_avec_deconnexion(titre_role, nom_utilisateur=None):
